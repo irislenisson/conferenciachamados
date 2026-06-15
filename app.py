@@ -4,6 +4,7 @@ import threading
 from flask import Flask, render_template, jsonify
 from flask_socketio import SocketIO
 from scraper import iniciar_automacao
+import database
 
 PROGRESS_FILE = 'progresso.json'
 
@@ -11,7 +12,7 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'dev_troque_no_env')
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
-# ─── Flag global: impede execuções simultâneas ───────────────────────────────
+# Flag global para impedir múltiplas execuções concorrentes
 _automacao_em_andamento = False
 
 
@@ -44,7 +45,17 @@ def api_progresso():
     return jsonify({'tem_progresso': False})
 
 
-def _roda_thread(ja_processados, headless, num_threads):
+@app.route('/api/historico')
+def api_historico():
+    """Endpoint REST: retorna a lista das execuções passadas no SQLite."""
+    try:
+        dados = database.listar_historico()
+        return jsonify(dados)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+def _roda_thread(ja_processados, headless, num_threads, webhook_url, timeout_busca, timeout_pagina):
     """Função executada na thread de automação. Garante liberação da flag ao final."""
     global _automacao_em_andamento
     try:
@@ -52,7 +63,10 @@ def _roda_thread(ja_processados, headless, num_threads):
             socketio_emit_callback=socketio.emit,
             ja_processados=ja_processados,
             headless=headless,
-            num_threads=num_threads
+            num_threads=num_threads,
+            webhook_url=webhook_url,
+            timeout_busca=timeout_busca,
+            timeout_pagina=timeout_pagina
         )
     finally:
         _automacao_em_andamento = False
@@ -73,10 +87,17 @@ def handle_iniciar(data=None):
     
     data = data or {}
     headless = data.get('headless', True)
-    num_threads = data.get('num_threads', 1)
+    num_threads = int(data.get('num_threads', 1))
+    webhook_url = data.get('webhook_url', '').strip() or None
+    timeout_busca = int(data.get('timeout_busca', 8))
+    timeout_pagina = int(data.get('timeout_pagina', 15))
     
     socketio.emit('log_message', {'data': f'[INICIO] Iniciando nova varredura do zero (Modo Invisivel={headless}, Navegadores={num_threads})...'})
-    threading.Thread(target=_roda_thread, args=(set(), headless, num_threads), daemon=True).start()
+    threading.Thread(
+        target=_roda_thread, 
+        args=(set(), headless, num_threads, webhook_url, timeout_busca, timeout_pagina), 
+        daemon=True
+    ).start()
 
 
 @socketio.on('continuar_conferencia')
@@ -94,10 +115,17 @@ def handle_continuar(data=None):
     
     data = data or {}
     headless = data.get('headless', True)
-    num_threads = data.get('num_threads', 1)
+    num_threads = int(data.get('num_threads', 1))
+    webhook_url = data.get('webhook_url', '').strip() or None
+    timeout_busca = int(data.get('timeout_busca', 8))
+    timeout_pagina = int(data.get('timeout_pagina', 15))
     
     socketio.emit('log_message', {'data': f'[INICIO] Continuando varredura ({n} chamado(s) ja processados, Modo Invisivel={headless}, Navegadores={num_threads})...'})
-    threading.Thread(target=_roda_thread, args=(ja_processados, headless, num_threads), daemon=True).start()
+    threading.Thread(
+        target=_roda_thread, 
+        args=(ja_processados, headless, num_threads, webhook_url, timeout_busca, timeout_pagina), 
+        daemon=True
+    ).start()
 
 
 @socketio.on('limpar_progresso')
@@ -107,6 +135,9 @@ def handle_limpar():
         os.remove(PROGRESS_FILE)
     socketio.emit('progresso_limpo', {})
 
+
+# Inicializa as tabelas do banco no arranque do servidor
+database.inicializar_db()
 
 if __name__ == '__main__':
     socketio.run(app, debug=True, port=5000, allow_unsafe_werkzeug=True)

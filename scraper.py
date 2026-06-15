@@ -4,6 +4,7 @@ import time
 import json
 import threading
 from datetime import datetime
+import urllib.request
 
 # Garante que o terminal aceita UTF-8 mesmo em Windows (CP1252)
 try:
@@ -19,8 +20,10 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select
-from selenium.common.exceptions import UnexpectedAlertPresentException, NoSuchWindowException
+from selenium.common.exceptions import UnexpectedAlertPresentException, NoSuchWindowException, WebDriverException
 from dotenv import load_dotenv
+
+import database
 
 load_dotenv(override=True)
 
@@ -30,94 +33,142 @@ STATUS_RESOLVIDOS = {
     "ENCERRADO", "ENCERRADA",
 }
 
+class SheetsService:
+    """Serviço para gerenciar conexão e manipulação da planilha Google Sheets."""
+    def __init__(self, credentials_path, sheets_url, log_callback):
+        self.credentials_path = credentials_path
+        self.sheets_url = sheets_url
+        self.log_callback = log_callback
+        self.client = None
+        self.worksheet = None
+        self.lock = threading.Lock()
 
-def iniciar_automacao(socketio_emit_callback=None, ja_processados=None, headless=True, num_threads=1):
-    # Inicializa conjunto de chamados processados
-    ja_processados = ja_processados or set()
+    def conectar(self):
+        self.log_callback("[SHEETS] Iniciando autenticacao na API do Google Sheets...")
+        scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+        if not os.path.exists(self.credentials_path):
+            raise FileNotFoundError("Arquivo credentials.json nao encontrado!")
+        
+        credenciais = Credentials.from_service_account_file(self.credentials_path, scopes=scopes)
+        self.client = gspread.authorize(credenciais)
+        self.worksheet = self.client.open_by_url(self.sheets_url).get_worksheet(0)
+        self.log_callback("[OK] Planilha conectada com sucesso.")
 
-    # Locks para concorrência
-    sheet_lock = threading.Lock()
-    progress_lock = threading.Lock()
-    cookies_lock = threading.Lock()
+    def obter_dados(self):
+        with self.lock:
+            return self.worksheet.get_all_values()
 
-    # ─── helper de log ──────────────
-    def emitir_log(mensagem):
-        if socketio_emit_callback:
-            socketio_emit_callback('log_message', {'data': mensagem})
+    def atualizar_celulas(self, cells_to_update):
+        with self.lock:
+            self.worksheet.update_cells(cells_to_update)
+
+
+class CASDMSession:
+    """Gerencia a sessão do WebDriver no CA SDM, autenticação e cookies."""
+    def __init__(self, ca_email, ca_password, thread_id, headless, log_callback):
+        self.ca_email = ca_email
+        self.ca_password = ca_password
+        self.thread_id = thread_id
+        self.headless = headless
+        self.log_callback = log_callback
+        self.driver = None
+        self.wait = None
+        self.cookie_file = f'sessao_cookies_{thread_id}.json'
+        self.cookies_lock = threading.Lock()
+        self.main_window_handle = None
+
+    def fechar_alertas(self, contexto=""):
+        if not self.driver:
+            return False
         try:
-            print(mensagem)
-        except Exception:
-            try:
-                print(mensagem.encode('ascii', errors='replace').decode('ascii'))
-            except Exception:
-                pass
-
-    def salvar_progresso(total_pendentes):
-        try:
-            with open('progresso.json', 'w', encoding='utf-8') as f:
-                json.dump({
-                    'processados': list(ja_processados),
-                    'total': total_pendentes
-                }, f, ensure_ascii=False, indent=4)
-        except Exception as e_save:
-            emitir_log(f"[ERRO] Falha ao salvar progresso: {str(e_save)}")
-
-    def fechar_alertas(driver, thread_id, contexto=""):
-        """Descarta qualquer alerta aberto. Retorna True se havia alerta."""
-        try:
-            alert = driver.switch_to.alert
+            alert = self.driver.switch_to.alert
             texto = alert.text
             alert.accept()
-            emitir_log(f"[Navegador {thread_id}] [AVISO] Alerta fechado [{contexto}]: {texto}")
+            self.log_callback(f"[Navegador {self.thread_id}] [AVISO] Alerta fechado [{contexto}]: {texto}")
             time.sleep(0.5)
             return True
         except Exception:
             return False
 
-    # ─── helper: navegar com retry ────────────
-    def navegar(driver, url, thread_id, tentativas=3):
-        for t in range(tentativas):
-            try:
-                fechar_alertas(driver, thread_id, "pré-navegação")
-                driver.get(url)
-                return True
-            except UnexpectedAlertPresentException:
-                fechar_alertas(driver, thread_id, f"navegação tentativa {t+1}")
-                time.sleep(1)
-            except Exception as e:
-                emitir_log(f"[Navegador {thread_id}] Erro ao navegar (tentativa {t+1}): {str(e)}")
-                time.sleep(1)
-        return False
+    def inicializar_driver(self):
+        self.log_callback(f"[Navegador {self.thread_id}] Inicializando navegador (Headless={self.headless})...")
+        options = webdriver.ChromeOptions()
+        if self.headless:
+            options.add_argument("--headless=new")
+            options.add_argument("--window-size=1920,1080")
+            options.add_argument("--disable-gpu")
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-dev-shm-usage")
+        
+        self.driver = webdriver.Chrome(options=options)
+        self.wait = WebDriverWait(self.driver, 10)
 
-    # ─── helper: fazer login ──────────────────
-    def fazer_login(driver, wait, ca_email, ca_password, thread_id):
+        cookies_restaurados = False
+        if os.path.exists(self.cookie_file):
+            try:
+                self.driver.get("http://vms-ca-sdm:8080/")
+                time.sleep(1)
+                with self.cookies_lock:
+                    with open(self.cookie_file, 'r', encoding='utf-8') as f:
+                        cookies = json.load(f)
+                for cookie in cookies:
+                    try:
+                        self.driver.add_cookie(cookie)
+                    except Exception:
+                        pass
+                self.driver.get("http://vms-ca-sdm:8080/CAisd/pdmweb.exe")
+                time.sleep(2)
+                try:
+                    self.driver.find_element(By.NAME, "USERNAME")
+                    self.log_callback(f"[Navegador {self.thread_id}] Cookies expirados. Login necessario.")
+                except Exception:
+                    self.log_callback(f"[Navegador {self.thread_id}] [OK] Sessao restaurada com sucesso via cookies.")
+                    cookies_restaurados = True
+            except Exception as e:
+                self.log_callback(f"[Navegador {self.thread_id}] [AVISO] Falha ao carregar cookies: {str(e)[:60]}")
+
+        if not cookies_restaurados:
+            self.driver.get("http://vms-ca-sdm:8080/CAisd/pdmweb.exe")
+            self.fazer_login()
+            try:
+                with self.cookies_lock:
+                    with open(self.cookie_file, 'w', encoding='utf-8') as f:
+                        json.dump(self.driver.get_cookies(), f)
+                self.log_callback(f"[Navegador {self.thread_id}] [OK] Cookies de sessao salvos.")
+            except Exception as e:
+                self.log_callback(f"[Navegador {self.thread_id}] Falha ao salvar cookies: {str(e)}")
+
+        self.main_window_handle = self.driver.current_window_handle
+        return self.driver
+
+    def fazer_login(self):
         username_field = None
         for tentativa in range(5):
-            fechar_alertas(driver, thread_id, f"login tentativa {tentativa+1}")
+            self.fechar_alertas(f"login tentativa {tentativa+1}")
             try:
-                username_field = WebDriverWait(driver, 3).until(
+                username_field = WebDriverWait(self.driver, 3).until(
                     EC.presence_of_element_located((By.NAME, "USERNAME"))
                 )
                 break
             except UnexpectedAlertPresentException:
-                fechar_alertas(driver, thread_id, f"login alerta tentativa {tentativa+1}")
+                self.fechar_alertas(f"login alerta tentativa {tentativa+1}")
                 time.sleep(1)
             except Exception:
                 time.sleep(1)
 
         if username_field:
             try:
-                password_field = driver.find_element(By.NAME, "PIN")
-                emitir_log(f"[Navegador {thread_id}] [LOGIN] Tela de login detectada. Realizando login...")
+                password_field = self.driver.find_element(By.NAME, "PIN")
+                self.log_callback(f"[Navegador {self.thread_id}] [LOGIN] Tela de login detectada. Realizando login...")
                 username_field.clear()
-                username_field.send_keys(ca_email)
+                username_field.send_keys(self.ca_email)
                 password_field.clear()
-                password_field.send_keys(ca_password)
+                password_field.send_keys(self.ca_password)
 
                 logon_clicado = False
                 for seletor in [(By.ID, "imgBtn0"), (By.CLASS_NAME, "loginbtn"), (By.NAME, "HardcodedSub")]:
                     try:
-                        driver.find_element(*seletor).click()
+                        self.driver.find_element(*seletor).click()
                         logon_clicado = True
                         break
                     except Exception:
@@ -127,23 +178,33 @@ def iniciar_automacao(socketio_emit_callback=None, ja_processados=None, headless
                     password_field.submit()
 
                 time.sleep(3)
-                return True
-            except UnexpectedAlertPresentException:
-                fechar_alertas(driver, thread_id, "durante preenchimento do login")
-                return False
             except Exception as e:
-                emitir_log(f"[Navegador {thread_id}] Erro ao preencher login: {str(e)}")
-                return False
+                self.log_callback(f"[Navegador {self.thread_id}] Erro ao preencher login: {str(e)}")
+                raise e
         else:
-            emitir_log(f"[Navegador {thread_id}] Sessao ativa detectada (sem tela de login).")
-            return True
+            self.log_callback(f"[Navegador {self.thread_id}] Sessao ativa detectada (sem tela de login).")
 
-    # --- helper: buscar chamado no gobtn ------
-    def buscar_no_gobtn(driver, wait, id_chamado, valor_ticket, thread_id, timeout_gobtn=8):
-        fechar_alertas(driver, thread_id, "pre-gobtn")
+    def fechar_driver(self):
+        if self.driver:
+            try:
+                self.driver.quit()
+            except Exception:
+                pass
+            self.driver = None
+
+
+class CASDMScraper:
+    """Executa buscas e extrai detalhes dos chamados no CA SDM."""
+    def __init__(self, session: CASDMSession, log_callback):
+        self.session = session
+        self.log_callback = log_callback
+
+    def buscar_no_gobtn(self, id_chamado, valor_ticket, timeout_busca=8):
+        driver = self.session.driver
+        self.session.fechar_alertas("pre-gobtn")
         try:
             driver.switch_to.default_content()
-            WebDriverWait(driver, timeout_gobtn).until(
+            WebDriverWait(driver, timeout_busca).until(
                 EC.frame_to_be_available_and_switch_to_it("gobtn")
             )
             select_el = WebDriverWait(driver, 5).until(
@@ -158,19 +219,15 @@ def iniciar_automacao(socketio_emit_callback=None, ja_processados=None, headless
             driver.find_element(By.ID, "imgBtn0").click()
             driver.switch_to.default_content()
             return True
-        except UnexpectedAlertPresentException:
-            fechar_alertas(driver, thread_id, "dentro do gobtn")
-            driver.switch_to.default_content()
-            return False
         except Exception as e:
-            emitir_log(f"[Navegador {thread_id}] buscar_no_gobtn falhou: {str(e)[:80]}")
+            self.log_callback(f"[Navegador {self.session.thread_id}] buscar_no_gobtn falhou: {str(e)[:80]}")
             try:
                 driver.switch_to.default_content()
             except Exception:
                 pass
             return False
 
-    def mapear_grupo_para_torre(grupo_raw):
+    def mapear_grupo_para_torre(self, grupo_raw):
         if not grupo_raw:
             return ""
         g = grupo_raw.strip().upper()
@@ -188,16 +245,15 @@ def iniciar_automacao(socketio_emit_callback=None, ja_processados=None, headless
             return "BI"
         return ""
 
-    # --- helper: extrair dados do popup -------
-    def extrair_dados_popup(driver, wait, id_chamado, index,
-                            data_torre_atual, data_envio_atual,
-                            thread_id, grupos_nao_mapeados):
+    def extrair_dados_popup(self, id_chamado, index, data_torre_atual, data_envio_atual, grupos_nao_mapeados, timeout_pagina=15):
+        driver = self.session.driver
         chamado_carregado = False
         chamado_nao_encontrado = False
 
-        for _ in range(30):
+        limite_loops = int(timeout_pagina * 2)
+        for _ in range(limite_loops):
             try:
-                fechar_alertas(driver, thread_id, "aguardando cai_main")
+                self.session.fechar_alertas("aguardando cai_main")
                 driver.switch_to.default_content()
                 driver.switch_to.frame("cai_main")
                 
@@ -231,17 +287,17 @@ def iniciar_automacao(socketio_emit_callback=None, ja_processados=None, headless
                     pass
 
             except UnexpectedAlertPresentException:
-                fechar_alertas(driver, thread_id, "cai_main loop")
+                self.session.fechar_alertas("cai_main loop")
             except Exception:
                 pass
             time.sleep(0.5)
 
         if chamado_nao_encontrado:
-            emitir_log(f"[Navegador {thread_id}] Linha {index}: [NAO LOCALIZADO] Chamado {id_chamado} nao localizado.")
+            self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [NAO LOCALIZADO] Chamado {id_chamado} nao localizado.")
             return None
 
         if not chamado_carregado:
-            emitir_log(f"[Navegador {thread_id}] Linha {index}: [TIMEOUT] Popup do chamado {id_chamado} nao carregou.")
+            self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [TIMEOUT] Popup do chamado {id_chamado} nao carregou.")
             return None
 
         try:
@@ -253,7 +309,8 @@ def iniciar_automacao(socketio_emit_callback=None, ja_processados=None, headless
         valores_retornados = {
             'col_d_val': None,
             'col_e_val': None,
-            'col_g_val': None
+            'col_g_val': None,
+            'grupo_raw': None
         }
 
         # -- Coluna D: Torre -----------
@@ -269,13 +326,13 @@ def iniciar_automacao(socketio_emit_callback=None, ja_processados=None, headless
                 continue
 
         if grupo_raw:
-            codigo_torre = mapear_grupo_para_torre(grupo_raw)
+            valores_retornados['grupo_raw'] = grupo_raw
+            codigo_torre = self.mapear_grupo_para_torre(grupo_raw)
             if codigo_torre:
                 valores_retornados['col_d_val'] = codigo_torre
             else:
-                emitir_log(f"[Navegador {thread_id}] Linha {index}: [AVISO] Grupo '{grupo_raw}' nao mapeado para Torre.")
-                with progress_lock:
-                    grupos_nao_mapeados.add(grupo_raw)
+                self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [AVISO] Grupo '{grupo_raw}' nao mapeado para Torre.")
+                grupos_nao_mapeados.add(grupo_raw)
 
         # -- Coluna E: Data Abertura -----------
         if not data_envio_atual:
@@ -296,7 +353,7 @@ def iniciar_automacao(socketio_emit_callback=None, ja_processados=None, headless
                     data_obj = datetime.strptime(data_pura, "%d/%m/%Y")
                     valores_retornados['col_e_val'] = data_obj.strftime("%d/%m/%Y")
                 except Exception as e:
-                    emitir_log(f"[Navegador {thread_id}] Linha {index}: [ERRO] Formatacao data abertura: {str(e)}")
+                    self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [ERRO] Formatacao data abertura: {str(e)}")
 
         # -- Status Real -----------
         status_real_ca = ""
@@ -332,373 +389,442 @@ def iniciar_automacao(socketio_emit_callback=None, ja_processados=None, headless
                     data_obj = datetime.strptime(data_pura, "%d/%m/%Y")
                     valores_retornados['col_g_val'] = data_obj.strftime("%d/%m/%Y")
                 except Exception as e:
-                    emitir_log(f"[Navegador {thread_id}] Linha {index}: [ERRO] Formatacao resolucao '{campo_data_hora}': {str(e)}")
+                    self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [ERRO] Formatacao resolucao '{campo_data_hora}': {str(e)}")
 
         return valores_retornados
 
-    # ═══════════════════════════════════════════
-    # EXECUÇÃO PRINCIPAL
-    # ═══════════════════════════════════════════
-    try:
-        ca_email = os.getenv("CA_EMAIL")
-        ca_password = os.getenv("CA_PASSWORD")
 
-        emitir_log("[SHEETS] Iniciando autenticacao na API do Google Sheets...")
-        scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-        if not os.path.exists('credentials.json'):
-            emitir_log("[ERRO] Arquivo credentials.json nao encontrado!")
-            return
-
-        credenciais = Credentials.from_service_account_file('credentials.json', scopes=scopes)
-        client = gspread.authorize(credenciais)
+class AutomationOrchestrator:
+    """Orquestrador principal que gerencia as threads, estatísticas, banco de dados e webhook."""
+    def __init__(self, socketio_emit_callback, ja_processados, headless, num_threads, webhook_url, timeout_busca, timeout_pagina):
+        self.socketio_emit_callback = socketio_emit_callback
+        self.ja_processados = ja_processados or set()
+        self.headless = headless
+        self.num_threads = num_threads
+        self.webhook_url = webhook_url
+        self.timeout_busca = timeout_busca
+        self.timeout_pagina = timeout_pagina
         
-        url_planilha = os.getenv("SHEETS_URL", "https://docs.google.com/spreadsheets/d/1ETTEHL0yJ7Y4qaAHqR7cSktEgmsRH6DkWzVkABMI8fU/edit?pli=1&gid=0#gid=0")
-        sh = client.open_by_url(url_planilha)
-        worksheet = sh.get_worksheet(0)
-        emitir_log("[OK] Planilha conectada. Lendo dados...")
-        dados = worksheet.get_all_values()
-
-        # Conta total de chamados pendentes
-        total_pendentes = sum(1 for linha in dados[1:] if len(linha) > 7 and linha[7].strip().upper() == "PENDENTE")
-        emitir_log(f"[OK] Total de chamados PENDENTES na planilha: {total_pendentes}")
-
-        # Identifica chamados duplicados entre os pendentes
-        from collections import defaultdict
-        chamados_linhas = defaultdict(list)
-        for idx, linha in enumerate(dados[1:], start=2):
-            if len(linha) > 7 and linha[7].strip().upper() == "PENDENTE":
-                id_ch = linha[1].strip()
-                if id_ch:
-                    chamados_linhas[id_ch].append(idx)
+        # Locks para sincronização entre threads
+        self.sheet_lock = threading.Lock()
+        self.progress_lock = threading.Lock()
+        self.stats_lock = threading.Lock()
         
-        duplicados = {id_ch: lst for id_ch, lst in chamados_linhas.items() if len(lst) > 1}
-        if duplicados:
-            emitir_log("[AVISO] Chamados duplicados pendentes detectados na planilha:")
-            for id_ch, lst in duplicados.items():
-                emitir_log(f"   - Chamado {id_ch} encontrado nas linhas: {', '.join(map(str, lst))}")
-
-        # Envia progresso inicial
-        if socketio_emit_callback:
-            socketio_emit_callback('progresso', {'atual': len(ja_processados), 'total': total_pendentes})
-
-        # Coleta índices a serem processados
-        indices_para_processar = []
-        for index, linha in enumerate(dados[1:], start=2):
-            status_h = linha[7].strip()
-            if status_h.upper() != "PENDENTE":
-                continue
-            if index in ja_processados:
-                continue
-            indices_para_processar.append(index)
-
-        if not indices_para_processar:
-            emitir_log("[FIM] Nao ha chamados pendentes para processar.")
-            return
-
-        # Estatísticas finais compartilhadas
-        stats = {
-            'plano_a': 0, 'plano_b': 0,
-            'col_d': 0, 'col_e': 0, 'col_g': 0
+        self.grupos_nao_mapeados = set()
+        self.duplicados = {}
+        self.total_pendentes = 0
+        
+        # Estatísticas de execução
+        self.stats = {
+            'sucessos': 0,
+            'avisos': 0,
+            'erros': 0,
+            'col_d': 0,
+            'col_e': 0,
+            'col_g': 0,
+            'plano_a': 0,
+            'plano_b': 0
         }
-        stats_lock = threading.Lock()
-        grupos_nao_mapeados = set()
+        self.exec_id = None
+        self.data_inicio_str = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
-        # Função de execução de cada worker
-        def worker_thread(thread_id, chunk_indices):
-            emitir_log(f"[Navegador {thread_id}] Inicializando navegador (Headless={headless})...")
-            options = webdriver.ChromeOptions()
-            if headless:
-                options.add_argument("--headless=new")
-                options.add_argument("--window-size=1920,1080")
-            
-            driver = webdriver.Chrome(options=options)
-            wait = WebDriverWait(driver, 10)
+    def log(self, mensagem):
+        if self.socketio_emit_callback:
+            self.socketio_emit_callback('log_message', {'data': mensagem})
+        try:
+            print(mensagem)
+        except Exception:
+            try:
+                print(mensagem.encode('ascii', errors='replace').decode('ascii'))
+            except Exception:
+                pass
 
-            # Autenticação e Cookies isolados por thread
-            cookies_restaurados = False
-            cookie_file = f'sessao_cookies_{thread_id}.json'
-            if os.path.exists(cookie_file):
+    def salvar_progresso(self):
+        try:
+            with open('progresso.json', 'w', encoding='utf-8') as f:
+                json.dump({
+                    'processados': list(self.ja_processados),
+                    'total': self.total_pendentes
+                }, f, ensure_ascii=False, indent=4)
+        except Exception as e:
+            self.log(f"[ERRO] Falha ao salvar progresso temporario: {str(e)}")
+
+    def enviar_webhook(self, tempo_total):
+        if not self.webhook_url:
+            return
+        payload = {
+            "status": "sucesso" if self.stats['erros'] == 0 else "concluido_com_erros",
+            "data_inicio": self.data_inicio_str,
+            "tempo_total": round(tempo_total, 2),
+            "total_chamados": self.total_pendentes,
+            "sucessos": self.stats['sucessos'],
+            "avisos": self.stats['avisos'],
+            "erros": self.stats['erros'],
+            "col_d_atualizadas": self.stats['col_d'],
+            "col_e_atualizadas": self.stats['col_e'],
+            "col_g_atualizadas": self.stats['col_g'],
+            "grupos_desconhecidos": list(self.grupos_nao_mapeados)
+        }
+        try:
+            self.log(f"[WEBHOOK] Enviando payload para {self.webhook_url}...")
+            data = json.dumps(payload).encode('utf-8')
+            req = urllib.request.Request(
+                self.webhook_url,
+                data=data,
+                headers={'Content-Type': 'application/json'}
+            )
+            with urllib.request.urlopen(req, timeout=10) as response:
+                self.log(f"[OK] Webhook disparado. Status retorno: {response.status}")
+        except Exception as e:
+            self.log(f"[AVISO] Falha ao enviar Webhook: {str(e)}")
+
+    def worker_thread(self, thread_id, chunk_indices, dados, sheets_service, ca_email, ca_password):
+        # Inicializa sessão do CA SDM
+        session = CASDMSession(ca_email, ca_password, thread_id, self.headless, self.log)
+        scraper = CASDMScraper(session, self.log)
+        
+        try:
+            session.inicializar_driver()
+        except Exception as e:
+            self.log(f"[Navegador {thread_id}] [ERRO] Falha critica de inicializacao: {str(e)}")
+            with self.stats_lock:
+                self.stats['erros'] += 1
+            return
+
+        for idx in chunk_indices:
+            # Dupla checagem para evitar concorrência redundante
+            with self.progress_lock:
+                if idx in self.ja_processados:
+                    continue
+
+            linha = dados[idx - 1]
+            id_chamado       = linha[1].strip()
+            status_h         = linha[7].strip()
+            data_torre_atual = linha[3].strip() if len(linha) > 3 else ""
+            data_envio_atual = linha[4].strip() if len(linha) > 4 else ""
+
+            if id_chamado in self.duplicados:
+                outras_linhas = [l for l in self.duplicados[id_chamado] if l != idx]
+                self.log(f"[Navegador {thread_id}] Linha {idx}: [AVISO] Chamado duplicado {id_chamado}. Também na(s) linha(s): {', '.join(map(str, outras_linhas))}")
+
+            self.log(f"\n{'-'*55}")
+            self.log(f"[Navegador {thread_id}] [LINHA {idx}] {id_chamado} | Status H: {status_h}")
+
+            id_upper = id_chamado.upper()
+            if id_upper.startswith('I'):
+                valor_ticket = "go_in"
+            elif id_upper.startswith('R'):
+                valor_ticket = "go_cr"
+            elif id_upper.startswith('P'):
+                valor_ticket = "go_pr"
+            else:
+                self.log(f"[Navegador {thread_id}] Linha {idx}: [AVISO] Prefixo invalido '{id_chamado[0]}'. Pulando.")
+                with self.stats_lock:
+                    self.stats['avisos'] += 1
+                with self.progress_lock:
+                    self.ja_processados.add(idx)
+                    self.salvar_progresso()
+                    if self.socketio_emit_callback:
+                        self.socketio_emit_callback('progresso', {'atual': len(self.ja_processados), 'total': self.total_pendentes})
+                continue
+
+            # --- PROCESSAMENTO DO CHAMADO COM TRATAMENTO E AUTO-RECUPERAÇÃO (Self-Healing) ---
+            tentativa_processo = 0
+            processamento_completo = False
+
+            while tentativa_processo < 2 and not processamento_completo:
+                tentativa_processo += 1
                 try:
-                    driver.get("http://vms-ca-sdm:8080/")
-                    time.sleep(1)
-                    with cookies_lock:
-                        with open(cookie_file, 'r', encoding='utf-8') as f:
-                            cookies = json.load(f)
-                    for cookie in cookies:
-                        try:
-                            driver.add_cookie(cookie)
-                        except Exception:
-                            pass
-                    driver.get("http://vms-ca-sdm:8080/CAisd/pdmweb.exe")
-                    time.sleep(2)
+                    # Verifica se o driver está ativo
                     try:
-                        driver.find_element(By.NAME, "USERNAME")
-                        emitir_log(f"[Navegador {thread_id}] Cookies expirados. Login necessario.")
+                        _ = session.driver.current_window_handle
                     except Exception:
-                        emitir_log(f"[Navegador {thread_id}] [OK] Sessao restaurada com sucesso via cookies.")
-                        cookies_restaurados = True
-                except Exception as e_cook:
-                    emitir_log(f"[Navegador {thread_id}] [AVISO] Falha ao carregar cookies: {str(e_cook)[:60]}")
+                        self.log(f"[Navegador {thread_id}] [AUTORRECUPERAÇÃO] WebDriver inativo. Reiniciando driver...")
+                        session.fechar_driver()
+                        session.inicializar_driver()
 
-            if not cookies_restaurados:
-                driver.get("http://vms-ca-sdm:8080/CAisd/pdmweb.exe")
-                fazer_login(driver, wait, ca_email, ca_password, thread_id)
-                try:
-                    with cookies_lock:
-                        with open(cookie_file, 'w', encoding='utf-8') as f:
-                            json.dump(driver.get_cookies(), f)
-                    emitir_log(f"[Navegador {thread_id}] [OK] Cookies de sessao salvos.")
-                except Exception as e_save:
-                    emitir_log(f"[Navegador {thread_id}] Falha ao salvar cookies: {str(e_save)}")
-
-            janela_principal = driver.current_window_handle
-            
-            # Executa os chamados do chunk
-            for idx in chunk_indices:
-                # Dupla checagem sob Lock para evitar processamentos redundantes
-                with progress_lock:
-                    if idx in ja_processados:
-                        continue
-                
-                linha = dados[idx - 1]
-                id_chamado       = linha[1].strip()
-                status_h         = linha[7].strip()
-                data_torre_atual = linha[3].strip() if len(linha) > 3 else ""
-                data_envio_atual = linha[4].strip() if len(linha) > 4 else ""
-
-                if id_chamado in duplicados:
-                    outras_linhas = [l for l in duplicados[id_chamado] if l != idx]
-                    emitir_log(f"[Navegador {thread_id}] Linha {idx}: [AVISO] Chamado duplicado {id_chamado}. Presente tambem na(s) linha(s): {', '.join(map(str, outras_linhas))}")
-
-                emitir_log(f"\n{'-'*55}")
-                emitir_log(f"[Navegador {thread_id}] [LINHA {idx}] {id_chamado} | Status H: {status_h}")
-
-                # Determina tipo pelo prefixo do ID
-                id_upper = id_chamado.upper()
-                if id_upper.startswith('I'):
-                    valor_ticket = "go_in"
-                elif id_upper.startswith('R'):
-                    valor_ticket = "go_cr"
-                elif id_upper.startswith('P'):
-                    valor_ticket = "go_pr"
-                else:
-                    emitir_log(f"[Navegador {thread_id}] Linha {idx}: [AVISO] Prefixo invalido '{id_chamado[0]}'. Pulando.")
-                    with progress_lock:
-                        ja_processados.add(idx)
-                        salvar_progresso(total_pendentes)
-                        if socketio_emit_callback:
-                            socketio_emit_callback('progresso', {'atual': len(ja_processados), 'total': total_pendentes})
-                    continue
-
-                try:
-                    driver.switch_to.window(janela_principal)
-                except NoSuchWindowException:
-                    emitir_log(f"[Navegador {thread_id}] Janela perdida. Re-login...")
-                    driver.get("http://vms-ca-sdm:8080/CAisd/pdmweb.exe")
-                    fazer_login(driver, wait, ca_email, ca_password, thread_id)
-                    janela_principal = driver.current_window_handle
-
-                busca_ok = False
-                
-                # PLANO A
-                emitir_log(f"[Navegador {thread_id}] [PLANO A] Tentando busca na sessao ativa...")
-                try:
-                    busca_ok = buscar_no_gobtn(driver, wait, id_chamado, valor_ticket, thread_id, timeout_gobtn=8)
-                    if busca_ok:
-                        WebDriverWait(driver, 12).until(lambda d: len(d.window_handles) > 1)
-                        with stats_lock:
-                            stats['plano_a'] += 1
-                        emitir_log(f"[Navegador {thread_id}] [PLANO A] OK - Popup aberto.")
-                except Exception as e_a:
-                    emitir_log(f"[Navegador {thread_id}] [PLANO A] FALHOU: {str(e_a)[:70]}")
-                    busca_ok = False
-
-                # PLANO B
-                if not busca_ok:
-                    emitir_log(f"[Navegador {thread_id}] [PLANO B] Navegando e realizando novo login...")
+                    # Garante janela principal ativa e fecha popups residuais
                     try:
-                        for handle in driver.window_handles:
-                            if handle != janela_principal:
-                                try:
-                                    driver.switch_to.window(handle)
-                                    driver.close()
-                                except Exception:
-                                    pass
-                        driver.switch_to.window(janela_principal)
+                        for handle in list(session.driver.window_handles):
+                            if handle != session.main_window_handle:
+                                session.driver.switch_to.window(handle)
+                                session.driver.close()
+                        session.driver.switch_to.window(session.main_window_handle)
+                    except Exception:
+                        # Se falhar a troca de janelas, força recriação total
+                        session.fechar_driver()
+                        session.inicializar_driver()
 
-                        driver.get("http://vms-ca-sdm:8080/CAisd/pdmweb.exe")
-                        fazer_login(driver, wait, ca_email, ca_password, thread_id)
-                        janela_principal = driver.current_window_handle
-
-                        fechar_alertas(driver, thread_id, "plano B pré-busca")
-                        busca_ok = buscar_no_gobtn(driver, wait, id_chamado, valor_ticket, thread_id, timeout_gobtn=12)
-
+                    # Executa busca no botão Go
+                    busca_ok = False
+                    self.log(f"[Navegador {thread_id}] [PLANO A] Buscando chamado {id_chamado}...")
+                    busca_ok = scraper.buscar_no_gobtn(id_chamado, valor_ticket, timeout_busca=self.timeout_busca)
+                    
+                    if busca_ok:
+                        WebDriverWait(session.driver, 12).until(lambda d: len(d.window_handles) > 1)
+                        with self.stats_lock:
+                            self.stats['plano_a'] += 1
+                        self.log(f"[Navegador {thread_id}] [PLANO A] OK - Popup detectado.")
+                    else:
+                        # PLANO B: Forçar login e re-tentar busca
+                        self.log(f"[Navegador {thread_id}] [PLANO B] Recriando sessao e re-tentando busca...")
+                        session.fechar_driver()
+                        session.inicializar_driver()
+                        session.fechar_alertas("plano B pré-busca")
+                        busca_ok = scraper.buscar_no_gobtn(id_chamado, valor_ticket, timeout_busca=self.timeout_busca + 4)
+                        
                         if busca_ok:
-                            WebDriverWait(driver, 15).until(lambda d: len(d.window_handles) > 1)
-                            with stats_lock:
-                                stats['plano_b'] += 1
-                            emitir_log(f"[Navegador {thread_id}] [PLANO B] OK - Popup aberto.")
-                        else:
-                            emitir_log(f"[Navegador {thread_id}] [PLANO B] FALHOU: Busca falhou. Pulando.")
-                            with progress_lock:
-                                ja_processados.add(idx)
-                                salvar_progresso(total_pendentes)
-                                if socketio_emit_callback:
-                                    socketio_emit_callback('progresso', {'atual': len(ja_processados), 'total': total_pendentes})
-                            continue
-                    except Exception as e_b:
-                        emitir_log(f"[Navegador {thread_id}] [PLANO B] FALHA CRITICA: {str(e_b)[:100]}. Pulando.")
-                        with progress_lock:
-                            ja_processados.add(idx)
-                            salvar_progresso(total_pendentes)
-                            if socketio_emit_callback:
-                                socketio_emit_callback('progresso', {'atual': len(ja_processados), 'total': total_pendentes})
+                            WebDriverWait(session.driver, 15).until(lambda d: len(d.window_handles) > 1)
+                            with self.stats_lock:
+                                self.stats['plano_b'] += 1
+                            self.log(f"[Navegador {thread_id}] [PLANO B] OK - Popup detectado.")
+
+                    if not busca_ok:
+                        self.log(f"[Navegador {thread_id}] Linha {idx}: [AVISO] Chamado nao encontrado no CA SDM.")
+                        with self.stats_lock:
+                            self.stats['avisos'] += 1
+                        processamento_completo = True
                         continue
 
-                # Switch para o popup
-                try:
-                    for handle in driver.window_handles:
-                        if handle != janela_principal:
-                            driver.switch_to.window(handle)
+                    # Alterna para a janela do popup
+                    popup_handle = None
+                    for handle in session.driver.window_handles:
+                        if handle != session.main_window_handle:
+                            popup_handle = handle
+                            session.driver.switch_to.window(handle)
                             break
-                except Exception as e:
-                    emitir_log(f"[Navegador {thread_id}] Linha {idx}: Erro ao mudar para popup: {str(e)}")
-                    with progress_lock:
-                        ja_processados.add(idx)
-                        salvar_progresso(total_pendentes)
-                        if socketio_emit_callback:
-                            socketio_emit_callback('progresso', {'atual': len(ja_processados), 'total': total_pendentes})
-                    continue
 
-                # Extrai dados do popup
-                resultado = None
-                try:
-                    resultado = extrair_dados_popup(
-                        driver, wait, id_chamado, idx,
-                        data_torre_atual, data_envio_atual,
-                        thread_id, grupos_nao_mapeados
+                    if not popup_handle:
+                        raise WebDriverException("Falha ao focar janela do popup do chamado.")
+
+                    # Extrai dados do popup
+                    resultado = scraper.extrair_dados_popup(
+                        id_chamado, idx, data_torre_atual, data_envio_atual, 
+                        self.grupos_nao_mapeados, timeout_pagina=self.timeout_pagina
                     )
-                    if isinstance(resultado, dict):
+
+                    if resultado:
                         cells_to_update = []
                         val_d = resultado.get('col_d_val')
                         val_e = resultado.get('col_e_val')
                         val_g = resultado.get('col_g_val')
+                        grupo_raw = resultado.get('grupo_raw')
+
+                        if grupo_raw and not val_d:
+                            # Registra grupo desconhecido no SQLite
+                            database.registrar_grupo_desconhecido(self.exec_id, grupo_raw)
 
                         if val_d:
                             if val_d != data_torre_atual:
                                 cells_to_update.append(Cell(row=idx, col=4, value=val_d))
-                                with stats_lock:
-                                    stats['col_d'] += 1
-                                if data_torre_atual:
-                                    emitir_log(f"[Navegador {thread_id}] Linha {idx}: [OK] Coluna D: '{data_torre_atual}' -> '{val_d}'")
-                                else:
-                                    emitir_log(f"[Navegador {thread_id}] Linha {idx}: [OK] Coluna D preenchida -> '{val_d}'")
+                                with self.stats_lock:
+                                    self.stats['col_d'] += 1
+                                    self.stats['sucessos'] += 1
+                                self.log(f"[Navegador {thread_id}] Linha {idx}: [OK] Coluna D atualizada -> '{val_d}'")
                             else:
-                                emitir_log(f"[Navegador {thread_id}] Linha {idx}: Coluna D ja correta ('{data_torre_atual}').")
+                                self.log(f"[Navegador {thread_id}] Linha {idx}: Coluna D ja esta correta ('{data_torre_atual}').")
 
                         if val_e:
                             if not data_envio_atual:
                                 cells_to_update.append(Cell(row=idx, col=5, value=val_e))
-                                with stats_lock:
-                                    stats['col_e'] += 1
-                                emitir_log(f"[Navegador {thread_id}] Linha {idx}: [OK] Coluna E atualizada -> {val_e}")
-                            else:
-                                emitir_log(f"[Navegador {thread_id}] Linha {idx}: Coluna E ja preenchida ('{data_envio_atual}').")
+                                with self.stats_lock:
+                                    self.stats['col_e'] += 1
+                                    self.stats['sucessos'] += 1
+                                self.log(f"[Navegador {thread_id}] Linha {idx}: [OK] Coluna E preenchida -> {val_e}")
 
                         if val_g:
                             cells_to_update.append(Cell(row=idx, col=7, value=val_g))
-                            with stats_lock:
-                                stats['col_g'] += 1
-                            emitir_log(f"[Navegador {thread_id}] Linha {idx}: [OK] Coluna G atualizada -> {val_g}")
+                            with self.stats_lock:
+                                self.stats['col_g'] += 1
+                                self.stats['sucessos'] += 1
+                            self.log(f"[Navegador {thread_id}] Linha {idx}: [OK] Coluna G preenchida -> {val_g}")
 
                         if cells_to_update:
-                            # Gravação thread-safe no Google Sheets
-                            with sheet_lock:
-                                worksheet.update_cells(cells_to_update)
-                            emitir_log(f"[Navegador {thread_id}] Linha {idx}: [OK] Planilha atualizada com sucesso.")
-                except UnexpectedAlertPresentException:
-                    fechar_alertas(driver, thread_id, "extracao de dados")
-                    emitir_log(f"[Navegador {thread_id}] Linha {idx}: Alerta durante extracao. Pulando chamado.")
-                except Exception as e_ext:
-                    import traceback
-                    emitir_log(f"[Navegador {thread_id}] Linha {idx}: Erro na extracao: {str(e_ext)}")
-                    emitir_log(traceback.format_exc())
+                            sheets_service.atualizar_celulas(cells_to_update)
+                            self.log(f"[Navegador {thread_id}] Linha {idx}: [OK] Google Sheets sincronizado.")
+                        else:
+                            # Se não atualizou nenhuma coluna mas obteve dados (ex: colunas já preenchidas corretamente)
+                            with self.stats_lock:
+                                self.stats['sucessos'] += 1
+                            self.log(f"[Navegador {thread_id}] Linha {idx}: [OK] Verificado sem pendências de atualização.")
+                    else:
+                        with self.stats_lock:
+                            self.stats['avisos'] += 1
 
-                # Atualiza progresso local
-                with progress_lock:
-                    ja_processados.add(idx)
-                    salvar_progresso(total_pendentes)
-                    if socketio_emit_callback:
-                        socketio_emit_callback('progresso', {'atual': len(ja_processados), 'total': total_pendentes})
-
-                # Fecha o popup
-                try:
-                    driver.close()
-                    driver.switch_to.window(janela_principal)
-                except Exception:
+                    # Fecha o popup e retorna à janela principal
                     try:
-                        remaining = driver.window_handles
-                        if remaining:
-                            driver.switch_to.window(remaining[0])
-                            janela_principal = driver.current_window_handle
+                        session.driver.close()
+                        session.driver.switch_to.window(session.main_window_handle)
                     except Exception:
                         pass
+                    
+                    processamento_completo = True
 
-            try:
-                driver.quit()
-            except Exception:
-                pass
+                except (WebDriverException, NoSuchWindowException) as e_drv:
+                    self.log(f"[Navegador {thread_id}] [AVISO] Falha de WebDriver na tentativa {tentativa_processo}: {str(e_drv)[:80]}")
+                    if tentativa_processo >= 2:
+                        self.log(f"[Navegador {thread_id}] [ERRO] Desistindo do chamado {id_chamado} apos falhas repetidas.")
+                        with self.stats_lock:
+                            self.stats['erros'] += 1
+                        processamento_completo = True
+                except Exception as e_gen:
+                    self.log(f"[Navegador {thread_id}] [ERRO] Falha geral no processamento: {str(e_gen)}")
+                    with self.stats_lock:
+                        self.stats['erros'] += 1
+                    processamento_completo = True
 
-        # Divide os índices entre as threads
-        chunks = [[] for _ in range(num_threads)]
-        for i, idx in enumerate(indices_para_processar):
-            chunks[i % num_threads].append(idx)
+            # Registra progresso e notifica frontend
+            with self.progress_lock:
+                self.ja_processados.add(idx)
+                self.salvar_progresso()
+                if self.socketio_emit_callback:
+                    self.socketio_emit_callback('progresso', {'atual': len(self.ja_processados), 'total': self.total_pendentes})
 
-        # Dispara as threads
-        threads = []
-        for thread_id in range(1, num_threads + 1):
-            chunk = chunks[thread_id - 1]
-            if not chunk:
-                continue
-            t = threading.Thread(target=worker_thread, args=(thread_id, chunk))
-            threads.append(t)
-            t.start()
+        # Finalização da thread
+        session.fechar_driver()
 
-        # Aguarda todas as threads
-        for t in threads:
-            t.join()
+    def orquestrar(self):
+        start_time = time.time()
+        
+        # Inicializa banco de dados
+        database.inicializar_db()
+        self.exec_id = database.criar_execucao(self.data_inicio_str)
 
-        # ── Relatorio final ───────────────────────────────────────────────
-        total_chamados = stats['plano_a'] + stats['plano_b']
-        emitir_log(f"\n{'='*55}")
-        emitir_log(f"[FIM] Varredura concluida!")
-        emitir_log(f"{'='*55}")
-        emitir_log(f"  Chamados processados : {total_chamados}")
-        emitir_log(f"  Plano A (sessao ok)  : {stats['plano_a']}")
-        emitir_log(f"  Plano B (novo login) : {stats['plano_b']}")
-        emitir_log(f"{'-'*55}")
-        emitir_log(f"  Atualizacoes na planilha:")
-        emitir_log(f"    Col. D (Torre)        : {stats['col_d']} linha(s) atualizada(s)")
-        emitir_log(f"    Col. E (Data Abertura): {stats['col_e']} linha(s) preenchida(s)")
-        emitir_log(f"    Col. G (Data Resoluc.): {stats['col_g']} linha(s) preenchida(s)")
-        emitir_log(f"{'-'*55}")
-        emitir_log(f"  Quantidade de atualizações feitas na Torre G (Feito em): {stats['col_g']}")
-        emitir_log(f"{'-'*55}")
-        if grupos_nao_mapeados:
-            emitir_log(f"  Grupos nao mapeados detectados:")
-            for grp in sorted(grupos_nao_mapeados):
-                emitir_log(f"    - {grp}")
-            emitir_log(f"{'-'*55}")
-        emitir_log(f"{'='*55}")
+        try:
+            ca_email = os.getenv("CA_EMAIL")
+            ca_password = os.getenv("CA_PASSWORD")
+            sheets_url = os.getenv("SHEETS_URL", "https://docs.google.com/spreadsheets/d/1ETTEHL0yJ7Y4qaAHqR7cSktEgmsRH6DkWzVkABMI8fU/edit?pli=1&gid=0#gid=0")
 
-        # Se concluiu tudo sem falhas, apaga o progresso salvo
-        if os.path.exists('progresso.json'):
-            try:
-                os.remove('progresso.json')
-            except Exception:
-                pass
+            sheets_service = SheetsService('credentials.json', sheets_url, self.log)
+            sheets_service.conectar()
+            dados = sheets_service.obter_dados()
 
-    except Exception as e:
-        import traceback
-        err_tb = traceback.format_exc()
-        emitir_log(f"[ERRO CRITICO] {str(e)}\nTraceback:\n{err_tb}")
+            # Mapeia chamados pendentes
+            self.total_pendentes = sum(1 for linha in dados[1:] if len(linha) > 7 and linha[7].strip().upper() == "PENDENTE")
+            self.log(f"[OK] Total de chamados PENDENTES na planilha: {self.total_pendentes}")
+
+            # Busca duplicados
+            from collections import defaultdict
+            chamados_linhas = defaultdict(list)
+            for idx, linha in enumerate(dados[1:], start=2):
+                if len(linha) > 7 and linha[7].strip().upper() == "PENDENTE":
+                    id_ch = linha[1].strip()
+                    if id_ch:
+                        chamados_linhas[id_ch].append(idx)
+            
+            self.duplicados = {id_ch: lst for id_ch, lst in chamados_linhas.items() if len(lst) > 1}
+            if self.duplicados:
+                self.log("[AVISO] Chamados duplicados pendentes encontrados:")
+                for id_ch, lst in self.duplicados.items():
+                    self.log(f"   - Chamado {id_ch} nas linhas: {', '.join(map(str, lst))}")
+
+            # Filtra o que realmente falta processar nesta rodada
+            indices_para_processar = []
+            for idx, linha in enumerate(dados[1:], start=2):
+                if len(linha) > 7 and linha[7].strip().upper() != "PENDENTE":
+                    continue
+                if idx in self.ja_processados:
+                    continue
+                indices_para_processar.append(idx)
+
+            if not indices_para_processar:
+                self.log("[FIM] Nenhum chamado pendente restante para processamento.")
+                # Conclui histórico
+                database.atualizar_execucao(self.exec_id, 0.0, 0, 0, 0, 0, 0, 0, 0)
+                return
+
+            if self.socketio_emit_callback:
+                self.socketio_emit_callback('progresso', {'atual': len(self.ja_processados), 'total': self.total_pendentes})
+
+            # Divisão dos índices entre os navegadores
+            chunks = [[] for _ in range(self.num_threads)]
+            for i, idx in enumerate(indices_para_processar):
+                chunks[i % self.num_threads].append(idx)
+
+            threads = []
+            for t_id in range(1, self.num_threads + 1):
+                chunk = chunks[t_id - 1]
+                if not chunk:
+                    continue
+                t = threading.Thread(
+                    target=self.worker_thread,
+                    args=(t_id, chunk, dados, sheets_service, ca_email, ca_password)
+                )
+                threads.append(t)
+                t.start()
+
+            for t in threads:
+                t.join()
+
+            # Conclusão e Relatório Final
+            duration = time.time() - start_time
+            
+            # Atualiza banco SQLite
+            database.atualizar_execucao(
+                exec_id=self.exec_id,
+                tempo_total=duration,
+                total_chamados=self.total_pendentes,
+                sucessos=self.stats['sucessos'],
+                avisos=self.stats['avisos'],
+                erros=self.stats['erros'],
+                col_d=self.stats['col_d'],
+                col_e=self.stats['col_e'],
+                col_g=self.stats['col_g']
+            )
+
+            self.log(f"\n{'='*55}")
+            self.log("[FIM] Varredura concluida!")
+            self.log(f"{'='*55}")
+            self.log(f"  Chamados Processados : {self.stats['sucessos'] + self.stats['avisos'] + self.stats['erros']}")
+            self.log(f"  Sucessos (Validados) : {self.stats['sucessos']}")
+            self.log(f"  Avisos               : {self.stats['avisos']}")
+            self.log(f"  Erros (Crashes/etc)  : {self.stats['erros']}")
+            self.log(f"  Plano A (Sessao OK)  : {self.stats['plano_a']}")
+            self.log(f"  Plano B (Novo Login) : {self.stats['plano_b']}")
+            self.log(f"{'-'*55}")
+            self.log(f"  Col. D (Torre)      : {self.stats['col_d']} atualizacao(oes)")
+            self.log(f"  Col. E (Abertura)   : {self.stats['col_e']} preenchimento(s)")
+            self.log(f"  Col. G (Resolucao)  : {self.stats['col_g']} preenchimento(s)")
+            self.log(f"{'='*55}")
+
+            # Envia Webhook se configurado
+            self.enviar_webhook(duration)
+
+            # Limpa progresso salvo ao concluir tudo com sucesso
+            if os.path.exists('progresso.json'):
+                try:
+                    os.remove('progresso.json')
+                except Exception:
+                    pass
+
+        except Exception as e:
+            import traceback
+            err_tb = traceback.format_exc()
+            self.log(f"[ERRO CRITICO] {str(e)}\n{err_tb}")
+            # Registra erro no banco de dados
+            if self.exec_id:
+                database.atualizar_execucao(
+                    exec_id=self.exec_id,
+                    tempo_total=time.time() - start_time,
+                    total_chamados=self.total_pendentes,
+                    sucessos=0,
+                    avisos=0,
+                    erros=1,
+                    col_d=0,
+                    col_e=0,
+                    col_g=0
+                )
+
+
+def iniciar_automacao(socketio_emit_callback=None, ja_processados=None, headless=True, num_threads=1, webhook_url=None, timeout_busca=8, timeout_pagina=15):
+    """Ponto de entrada compatível com a chamada original do Flask em app.py."""
+    orchestrator = AutomationOrchestrator(
+        socketio_emit_callback=socketio_emit_callback,
+        ja_processados=ja_processados,
+        headless=headless,
+        num_threads=num_threads,
+        webhook_url=webhook_url,
+        timeout_busca=timeout_busca,
+        timeout_pagina=timeout_pagina
+    )
+    orchestrator.orquestrar()

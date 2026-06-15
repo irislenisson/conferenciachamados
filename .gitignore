@@ -24,6 +24,8 @@ build/
 *.log
 *.tmp
 progresso.json
+historico.db
+
 
 # IDEs
 .vscode/

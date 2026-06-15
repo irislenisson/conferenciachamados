@@ -5,93 +5,207 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sistema de Conferência de Chamados</title>
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
+    <!-- Google Fonts: Inter e Outfit -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
 </head>
 <body>
     <div class="app-container">
+        <!-- Cabeçalho Principal -->
         <header class="app-header">
-            <h1>Sistema Conferência Trabalho</h1>
-            <p>Automação de Validação Baseada em Planilha de Controle</p>
+            <div class="header-left">
+                <h1>Sistema Conferência Trabalho</h1>
+                <p>Automação e Validação Baseada em Planilha de Controle</p>
+            </div>
+            <div class="header-right">
+                <div class="ws-status">
+                    <span id="ws-status-dot" class="status-dot offline"></span>
+                    <span id="ws-status-text" class="status-text">Desconectado</span>
+                </div>
+                <button id="theme-toggle" class="theme-btn" aria-label="Alternar tema">
+                    <span class="theme-icon">🌙</span>
+                </button>
+            </div>
         </header>
 
-        <main class="app-content">
-            <div class="card card-control">
-                <h2>Controle do Sistema</h2>
-                <p>Varre a coluna H em busca de chamados com status <strong>"PENDENTE"</strong> e realiza
-                a validação cruzada no CA SDM, preenchendo as colunas D, E e G quando aplicável.</p>
+        <!-- Grade de Conteúdo Principal -->
+        <main class="app-grid">
+            
+            <!-- Coluna da Esquerda: Configurações e Origem -->
+            <div class="grid-col grid-col-sidebar">
+                
+                <!-- Card de Controle e Configurações -->
+                <div class="card card-control">
+                    <h2>Configurações do Robô</h2>
+                    
+                    <div class="config-section">
+                        <div class="config-row">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="chk-headless" checked>
+                                Executar em modo invisível (Headless)
+                            </label>
+                        </div>
+                        
+                        <div class="config-row">
+                            <label for="select-threads" class="select-label">Navegadores em paralelo:</label>
+                            <select id="select-threads" class="config-select">
+                                <option value="1">1 Navegador (Padrão)</option>
+                                <option value="2">2 Navegadores (Mais Rápido)</option>
+                                <option value="3">3 Navegadores (Máxima Velocidade)</option>
+                            </select>
+                        </div>
+                        
+                        <div id="warning-parallel" class="warning-box" style="display: none;">
+                            ⚠️ <strong>Aviso:</strong> Usar múltiplos navegadores exige cookies isolados por sessão para evitar interferência.
+                        </div>
 
-                <!-- Configurações adicionais -->
-                <div class="config-section">
-                    <div class="config-row">
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="chk-headless" checked>
-                            Executar em modo invisível (Headless)
-                        </label>
+                        <!-- Novas Configurações: URL de Webhook e Timeouts -->
+                        <div class="config-group-inputs">
+                            <div class="input-row">
+                                <label for="webhook-url">URL do Webhook (JSON POST):</label>
+                                <input type="url" id="webhook-url" class="config-input" placeholder="https://api.site.com/webhook">
+                            </div>
+                            
+                            <div class="input-grid-2">
+                                <div class="input-row">
+                                    <label for="timeout-busca">Busca Ticket (s):</label>
+                                    <input type="number" id="timeout-busca" class="config-input" value="8" min="3" max="30">
+                                </div>
+                                <div class="input-row">
+                                    <label for="timeout-pagina">Carga de Página (s):</label>
+                                    <input type="number" id="timeout-pagina" class="config-input" value="15" min="5" max="60">
+                                </div>
+                            </div>
+                        </div>
                     </div>
-                    <div class="config-row">
-                        <label for="select-threads" class="select-label">Navegadores em paralelo:</label>
-                        <select id="select-threads" class="config-select">
-                            <option value="1">1 Navegador (Padrão)</option>
-                            <option value="2">2 Navegadores (Mais Rápido)</option>
-                            <option value="3">3 Navegadores (Máxima Velocidade)</option>
-                        </select>
+
+                    <!-- Barra de progresso -->
+                    <div id="progress-container" class="progress-container" style="display:none;">
+                        <div class="progress-label">
+                            <span id="progress-text">Processando...</span>
+                            <span id="progress-percent">0%</span>
+                        </div>
+                        <div class="progress-bar-bg">
+                            <div id="progress-bar" class="progress-bar" style="width:0%"></div>
+                        </div>
                     </div>
-                    <div id="warning-parallel" class="warning-box" style="display: none;">
-                        ⚠️ <strong>Nota:</strong> Usar múltiplos navegadores exige suporte do CA SDM para sessões simultâneas da mesma conta.
+
+                    <!-- Botões de ação -->
+                    <div class="btn-group">
+                        <button id="btn-iniciar" class="btn-primary">Iniciar Conferência</button>
+                        <button id="btn-continuar" class="btn-secondary" style="display:none;">
+                            ↩ Continuar
+                        </button>
+                    </div>
+
+                    <!-- Banner de progresso salvo -->
+                    <div id="banner-progresso" class="banner-info" style="display:none;">
+                        <span id="banner-texto">Existe uma execução incompleta salva.</span>
+                        <button id="btn-limpar-prog" class="btn-link">Descartar</button>
                     </div>
                 </div>
 
-                <!-- Barra de progresso -->
-                <div id="progress-container" class="progress-container" style="display:none;">
-                    <div class="progress-label">
-                        <span id="progress-text">Processando...</span>
-                        <span id="progress-percent">0%</span>
+                <!-- Card de Origem de Dados -->
+                <div class="card card-info">
+                    <h2>Dados da Conexão</h2>
+                    <div class="info-group">
+                        <label>Ambiente Alvo:</label>
+                        <span class="badge badge-url">vms-ca-sdm:8080</span>
                     </div>
-                    <div class="progress-bar-bg">
-                        <div id="progress-bar" class="progress-bar" style="width:0%"></div>
+                    <div class="info-group">
+                        <label>Planilha Integrada:</label>
+                        <a href="https://docs.google.com/spreadsheets/d/1ETTEHL0yJ7Y4qaAHqR7cSktEgmsRH6DkWzVkABMI8fU/"
+                           target="_blank" class="link-planilha">Acessar Google Sheets ↗</a>
                     </div>
-                </div>
-
-                <!-- Botões de ação -->
-                <div class="btn-group">
-                    <button id="btn-iniciar" class="btn-primary">Iniciar Conferência</button>
-                    <button id="btn-continuar" class="btn-secondary" style="display:none;">
-                        ↩ Continuar
-                    </button>
-                    <button id="btn-exportar" class="btn-export">📥 Exportar Logs</button>
-                </div>
-
-                <!-- Banner de progresso salvo -->
-                <div id="banner-progresso" class="banner-info" style="display:none;">
-                    <span id="banner-texto">Existe uma execução incompleta salva.</span>
-                    <button id="btn-limpar-prog" class="btn-link">Descartar</button>
+                    <p class="nota-seguranca">
+                        <strong>Nota técnica:</strong> A coluna H opera em modo <em>Somente Leitura</em>.
+                        As colunas gravadas automaticamente são:
+                        <strong>D</strong> (Torre), <strong>E</strong> (Data Abertura) e <strong>G</strong> (Data Resolução).
+                    </p>
                 </div>
             </div>
 
-            <div class="card card-info">
-                <h2>Origem de Dados Ativa</h2>
-                <div class="info-group">
-                    <label>Ambiente Alvo:</label>
-                    <span class="badge badge-url">vms-ca-sdm:8080</span>
+            <!-- Coluna da Direita: Dashboard de Métricas, Histórico e Console -->
+            <div class="grid-col grid-col-main">
+                
+                <!-- Dashboard de Métricas Visuais -->
+                <div class="card card-dashboard">
+                    <h2>Estatísticas da Execução Recente</h2>
+                    <div class="metrics-grid">
+                        <div class="metric-card">
+                            <span class="metric-val" id="metric-total">0</span>
+                            <span class="metric-lbl">Total Lidos</span>
+                        </div>
+                        <div class="metric-card metric-success-card">
+                            <span class="metric-val" id="metric-sucesso">0</span>
+                            <span class="metric-lbl">Sucessos</span>
+                        </div>
+                        <div class="metric-card metric-warning-card">
+                            <span class="metric-val" id="metric-aviso">0</span>
+                            <span class="metric-lbl">Avisos</span>
+                        </div>
+                        <div class="metric-card metric-error-card">
+                            <span class="metric-val" id="metric-erro">0</span>
+                            <span class="metric-lbl">Erros</span>
+                        </div>
+                        <div class="metric-card">
+                            <span class="metric-val" id="metric-tempo">0.0s</span>
+                            <span class="metric-lbl">Tempo Decorrido</span>
+                        </div>
+                    </div>
+                    <div class="metrics-updates-detail" id="metric-updates">
+                        Colunas atualizadas: <span>D: 0</span> • <span>E: 0</span> • <span>G: 0</span>
+                    </div>
                 </div>
-                <div class="info-group">
-                    <label>Planilha Integrada:</label>
-                    <a href="https://docs.google.com/spreadsheets/d/1ETTEHL0yJ7Y4qaAHqR7cSktEgmsRH6DkWzVkABMI8fU/"
-                       target="_blank" class="link-planilha">Acessar Google Sheets ↗</a>
-                </div>
-                <p class="nota-seguranca">
-                    <strong>Nota técnica:</strong> A coluna H opera em modo <em>Somente Leitura</em>.
-                    As colunas gravadas automaticamente são:
-                    <strong>D</strong> (Torre), <strong>E</strong> (Data Abertura) e <strong>G</strong> (Data Resolução).
-                </p>
-            </div>
 
-            <div class="card card-console">
-                <h2>Console de Execução</h2>
-                <div id="console-logs" class="console-box">
-                    <div class="log-line log-sistema">&gt; Sistema pronto para execução. Aguardando comando...</div>
+                <!-- Histórico de Execuções -->
+                <div class="card card-history">
+                    <h2>Histórico de Execuções (SQLite)</h2>
+                    <div class="table-container">
+                        <table class="history-table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Início</th>
+                                    <th>Total</th>
+                                    <th>S/A/E</th>
+                                    <th>Tempo</th>
+                                    <th>Colunas (D/E/G)</th>
+                                </tr>
+                            </thead>
+                            <tbody id="historico-tabela-corpo">
+                                <tr>
+                                    <td colspan="6" class="text-center">Nenhuma execução registrada.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
+
+                <!-- Console de Execução Logs -->
+                <div class="card card-console">
+                    <div class="console-header">
+                        <h2>Console de Execução</h2>
+                        <div class="console-actions">
+                            <input type="text" id="log-search" class="console-search" placeholder="🔍 Filtrar log por texto...">
+                            
+                            <div class="filter-group">
+                                <button class="btn-filter active" data-filter="all">Todos</button>
+                                <button class="btn-filter" data-filter="ok">Sucessos</button>
+                                <button class="btn-filter" data-filter="aviso">Avisos</button>
+                                <button class="btn-filter" data-filter="erro">Erros</button>
+                            </div>
+                            
+                            <button id="btn-exportar" class="btn-export">📥 Exportar</button>
+                        </div>
+                    </div>
+                    
+                    <div id="console-logs" class="console-box">
+                        <div class="log-line log-sistema">&gt; Sistema pronto para execução. Aguardando comando...</div>
+                    </div>
+                </div>
+                
             </div>
         </main>
     </div>
