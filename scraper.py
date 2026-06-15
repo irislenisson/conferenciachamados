@@ -403,6 +403,21 @@ def iniciar_automacao(socketio_emit_callback=None, ja_processados=None):
         total_pendentes = sum(1 for linha in dados[1:] if len(linha) > 7 and linha[7].strip().upper() == "PENDENTE")
         emitir_log(f"[OK] Total de chamados PENDENTES na planilha: {total_pendentes}")
 
+        # Identifica chamados duplicados entre os pendentes
+        from collections import defaultdict
+        chamados_linhas = defaultdict(list)
+        for idx, linha in enumerate(dados[1:], start=2):
+            if len(linha) > 7 and linha[7].strip().upper() == "PENDENTE":
+                id_ch = linha[1].strip()
+                if id_ch:
+                    chamados_linhas[id_ch].append(idx)
+        
+        duplicados = {id_ch: lst for id_ch, lst in chamados_linhas.items() if len(lst) > 1}
+        if duplicados:
+            emitir_log("[AVISO] Chamados duplicados pendentes detectados na planilha:")
+            for id_ch, lst in duplicados.items():
+                emitir_log(f"   - Chamado {id_ch} encontrado nas linhas: {', '.join(map(str, lst))}")
+
         # Envia progresso inicial
         if socketio_emit_callback:
             socketio_emit_callback('progresso', {'atual': len(ja_processados), 'total': total_pendentes})
@@ -440,6 +455,11 @@ def iniciar_automacao(socketio_emit_callback=None, ja_processados=None):
             # Isso garante que se houver chamados com o mesmo ID em linhas diferentes, ambos serao processados.
             if index in ja_processados:
                 continue
+
+            # Alerta sobre duplicidade no console de execucao
+            if id_chamado in duplicados:
+                outras_linhas = [l for l in duplicados[id_chamado] if l != index]
+                emitir_log(f"Linha {index}: [AVISO] Chamado duplicado {id_chamado} detectado. Tambem presente na(s) linha(s): {', '.join(map(str, outras_linhas))}")
 
             emitir_log(f"\n{'-'*55}")
             emitir_log(f"[LINHA {index}] {id_chamado} | Status H: {status_h}")
