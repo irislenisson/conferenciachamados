@@ -408,22 +408,33 @@ class CASDMScraper:
             except Exception:
                 continue
 
+        # Log diagnóstico do status lido (sempre visível para diagnóstico)
+        self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [DIAG] Status CA SDM lido: '{status_real_ca}' | Em STATUS_RESOLVIDOS: {status_real_ca.upper() in STATUS_RESOLVIDOS}")
+
         # -- Coluna G: Data Resolucao -----------
         # Só busca se o status do CA SDM indica resolvido E se a coluna G ainda não foi preenchida
         if status_real_ca.upper() in STATUS_RESOLVIDOS and not data_resolucao_atual:
             campo_data_hora = ""
-            for seletor in [
-                (By.XPATH, "//*[@pdmqa='resolve_date']"), (By.ID, "df_8_2"),
-                (By.XPATH, "//*[@pdmqa='close_date']"), (By.ID, "df_8_3"),
-            ]:
+            # Tenta múltiplos campos de data — resolve_date, close_date e last_mod_dt
+            # (chamados "Corrigido" podem usar campo diferente de chamados "Resolvido")
+            SELETORES_DATA_RESOLUCAO = [
+                (By.XPATH, "//*[@pdmqa='resolve_date']"),
+                (By.ID,    "df_8_2"),
+                (By.XPATH, "//*[@pdmqa='close_date']"),
+                (By.ID,    "df_8_3"),
+                (By.XPATH, "//*[@pdmqa='last_mod_dt']"),
+                (By.XPATH, "//*[@pdmqa='resolved_date']"),
+                (By.XPATH, "//*[@pdmqa='fix_date']"),
+            ]
+            for seletor in SELETORES_DATA_RESOLUCAO:
                 try:
                     el = driver.find_element(*seletor)
                     txt = el.text.strip()
-                    if txt:
+                    self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [DIAG] Seletor {seletor} => '{txt}'")
+                    if txt and not campo_data_hora:
                         campo_data_hora = txt
-                        break
                 except Exception:
-                    continue
+                    self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [DIAG] Seletor {seletor} => nao encontrado")
 
             if campo_data_hora:
                 try:
@@ -432,6 +443,10 @@ class CASDMScraper:
                     valores_retornados['col_g_val'] = data_obj.strftime("%d/%m/%Y")
                 except Exception as e:
                     self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [ERRO] Formatacao resolucao '{campo_data_hora}': {str(e)}")
+            else:
+                self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [AVISO] Status '{status_real_ca}' resolvido mas NENHUM campo de data encontrado no popup. Verifique os seletores.")
+        elif status_real_ca and status_real_ca.upper() not in STATUS_RESOLVIDOS:
+            self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [DIAG] Status '{status_real_ca}' nao esta em STATUS_RESOLVIDOS — coluna G nao sera preenchida.")
 
         return valores_retornados
 
