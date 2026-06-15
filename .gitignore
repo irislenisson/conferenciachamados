@@ -1,6 +1,7 @@
 # Arquivos sensíveis - NUNCA versionar
 .env
 credentials.json
+sessao_cookies*.json
 
 # Ambiente virtual Python
 .venv/
