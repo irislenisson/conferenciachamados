@@ -10,6 +10,19 @@ document.addEventListener('DOMContentLoaded', () => {
     const progressPercent = document.getElementById('progress-percent');
     const bannerProgresso = document.getElementById('banner-progresso');
     const bannerTexto     = document.getElementById('banner-texto');
+    const chkHeadless     = document.getElementById('chk-headless');
+    const selectThreads   = document.getElementById('select-threads');
+    const warningParallel = document.getElementById('warning-parallel');
+    const btnExportar     = document.getElementById('btn-exportar');
+
+    // Alerta sobre paralelismo
+    selectThreads.addEventListener('change', () => {
+        if (parseInt(selectThreads.value) > 1) {
+            warningParallel.style.display = 'block';
+        } else {
+            warningParallel.style.display = 'none';
+        }
+    });
 
     // ─── Verifica se há progresso salvo ao carregar a página ─────────────
     fetch('/api/progresso')
@@ -79,7 +92,10 @@ document.addEventListener('DOMContentLoaded', () => {
         progressText.textContent = 'Iniciando...';
         progressPercent.textContent = '0%';
         consoleLogs.innerHTML = '<div class="log-line log-sistema">> Solicitação enviada ao servidor...</div>';
-        socket.emit('iniciar_conferencia');
+        socket.emit('iniciar_conferencia', {
+            headless: chkHeadless.checked,
+            num_threads: parseInt(selectThreads.value)
+        });
     });
 
     // ─── Botão: Continuar de onde parou ──────────────────────────────────
@@ -87,12 +103,32 @@ document.addEventListener('DOMContentLoaded', () => {
         setBotoes(true);
         progressContainer.style.display = 'block';
         consoleLogs.innerHTML = '<div class="log-line log-sistema">> Retomando execução anterior...</div>';
-        socket.emit('continuar_conferencia');
+        socket.emit('continuar_conferencia', {
+            headless: chkHeadless.checked,
+            num_threads: parseInt(selectThreads.value)
+        });
     });
 
     // ─── Botão: Descartar progresso salvo ────────────────────────────────
     btnLimparProg.addEventListener('click', () => {
         socket.emit('limpar_progresso');
+    });
+
+    // ─── Botão: Exportar Logs ────────────────────────────────────────────
+    btnExportar.addEventListener('click', () => {
+        const lines = Array.from(consoleLogs.querySelectorAll('.log-line'))
+            .map(div => div.textContent.replace(/^>\s*/, ''))
+            .join('\r\n');
+        
+        const blob = new Blob([lines], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `logs_conferencia_${new Date().toISOString().slice(0,19).replace(/[:T]/g, '_')}.txt`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
     });
 
     // ─── Eventos do servidor ─────────────────────────────────────────────

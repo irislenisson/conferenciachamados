@@ -21,6 +21,27 @@
                 <p>Varre a coluna H em busca de chamados com status <strong>"PENDENTE"</strong> e realiza
                 a validação cruzada no CA SDM, preenchendo as colunas D, E e G quando aplicável.</p>
 
+                <!-- Configurações adicionais -->
+                <div class="config-section">
+                    <div class="config-row">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="chk-headless" checked>
+                            Executar em modo invisível (Headless)
+                        </label>
+                    </div>
+                    <div class="config-row">
+                        <label for="select-threads" class="select-label">Navegadores em paralelo:</label>
+                        <select id="select-threads" class="config-select">
+                            <option value="1">1 Navegador (Padrão)</option>
+                            <option value="2">2 Navegadores (Mais Rápido)</option>
+                            <option value="3">3 Navegadores (Máxima Velocidade)</option>
+                        </select>
+                    </div>
+                    <div id="warning-parallel" class="warning-box" style="display: none;">
+                        ⚠️ <strong>Nota:</strong> Usar múltiplos navegadores exige suporte do CA SDM para sessões simultâneas da mesma conta.
+                    </div>
+                </div>
+
                 <!-- Barra de progresso -->
                 <div id="progress-container" class="progress-container" style="display:none;">
                     <div class="progress-label">
@@ -36,8 +57,9 @@
                 <div class="btn-group">
                     <button id="btn-iniciar" class="btn-primary">Iniciar Conferência</button>
                     <button id="btn-continuar" class="btn-secondary" style="display:none;">
-                        ↩ Continuar de onde parou
+                        ↩ Continuar
                     </button>
+                    <button id="btn-exportar" class="btn-export">📥 Exportar Logs</button>
                 </div>
 
                 <!-- Banner de progresso salvo -->

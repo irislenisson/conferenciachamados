@@ -44,13 +44,15 @@ def api_progresso():
     return jsonify({'tem_progresso': False})
 
 
-def _roda_thread(ja_processados):
+def _roda_thread(ja_processados, headless, num_threads):
     """Função executada na thread de automação. Garante liberação da flag ao final."""
     global _automacao_em_andamento
     try:
         iniciar_automacao(
             socketio_emit_callback=socketio.emit,
-            ja_processados=ja_processados
+            ja_processados=ja_processados,
+            headless=headless,
+            num_threads=num_threads
         )
     finally:
         _automacao_em_andamento = False
@@ -58,7 +60,7 @@ def _roda_thread(ja_processados):
 
 
 @socketio.on('iniciar_conferencia')
-def handle_iniciar():
+def handle_iniciar(data=None):
     """Inicia uma nova varredura do zero. Apaga progresso anterior."""
     global _automacao_em_andamento
     if _automacao_em_andamento:
@@ -68,12 +70,17 @@ def handle_iniciar():
     if os.path.exists(PROGRESS_FILE):
         os.remove(PROGRESS_FILE)
     _automacao_em_andamento = True
-    socketio.emit('log_message', {'data': '[INICIO] Iniciando nova varredura do zero...'})
-    threading.Thread(target=_roda_thread, args=(set(),), daemon=True).start()
+    
+    data = data or {}
+    headless = data.get('headless', True)
+    num_threads = data.get('num_threads', 1)
+    
+    socketio.emit('log_message', {'data': f'[INICIO] Iniciando nova varredura do zero (Modo Invisivel={headless}, Navegadores={num_threads})...'})
+    threading.Thread(target=_roda_thread, args=(set(), headless, num_threads), daemon=True).start()
 
 
 @socketio.on('continuar_conferencia')
-def handle_continuar():
+def handle_continuar(data=None):
     """Continua uma varredura interrompida, pulando chamados já processados."""
     global _automacao_em_andamento
     if _automacao_em_andamento:
@@ -84,8 +91,13 @@ def handle_continuar():
     ja_processados = set(info['processados']) if info else set()
     _automacao_em_andamento = True
     n = len(ja_processados)
-    socketio.emit('log_message', {'data': f'[INICIO] Continuando varredura ({n} chamado(s) ja processados anteriormente)...'})
-    threading.Thread(target=_roda_thread, args=(ja_processados,), daemon=True).start()
+    
+    data = data or {}
+    headless = data.get('headless', True)
+    num_threads = data.get('num_threads', 1)
+    
+    socketio.emit('log_message', {'data': f'[INICIO] Continuando varredura ({n} chamado(s) ja processados, Modo Invisivel={headless}, Navegadores={num_threads})...'})
+    threading.Thread(target=_roda_thread, args=(ja_processados, headless, num_threads), daemon=True).start()
 
 
 @socketio.on('limpar_progresso')

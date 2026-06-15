@@ -236,3 +236,80 @@ body {
 .log-info    { color: var(--log-info); }
 .log-sistema { color: var(--log-sistema); }
 .log-default { color: var(--log-default); }
+
+/* ─── Configurações ───────────────────────────────────────── */
+.config-section {
+    background: #f8fafc;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 15px;
+    margin: 15px 0;
+}
+
+.config-row {
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.92rem;
+}
+
+.config-row:last-child {
+    margin-bottom: 0;
+}
+
+.checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-weight: 500;
+}
+
+.select-label {
+    font-weight: 500;
+}
+
+.config-select {
+    padding: 6px 10px;
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+    background: white;
+    font-size: 0.88rem;
+    color: var(--text-main);
+    outline: none;
+    cursor: pointer;
+}
+
+.warning-box {
+    margin-top: 8px;
+    padding: 8px 12px;
+    background: #fffbeb;
+    border-left: 4px solid #ffbb33;
+    border-radius: 4px;
+    font-size: 0.82rem;
+    color: #b45309;
+    line-height: 1.4;
+}
+
+.btn-export {
+    background-color: #4b5563;
+    color: white;
+    border: none;
+    padding: 12px 20px;
+    font-size: 0.95rem;
+    border-radius: 5px;
+    cursor: pointer;
+    font-weight: bold;
+    transition: background 0.2s;
+    white-space: nowrap;
+}
+
+.btn-export:hover:not(:disabled) {
+    background-color: #374151;
+}
+
+.btn-export:disabled {
+    background-color: #8a9bb0;
+    cursor: not-allowed;
+}
