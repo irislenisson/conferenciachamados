@@ -150,7 +150,6 @@ class CASDMSession:
         if os.path.exists(self.cookie_file):
             try:
                 self.driver.get("http://vms-ca-sdm:8080/")
-                time.sleep(1)
                 with self.cookies_lock:
                     with open(self.cookie_file, 'r', encoding='utf-8') as f:
                         cookies = json.load(f)
@@ -160,9 +159,12 @@ class CASDMSession:
                     except Exception:
                         pass
                 self.driver.get("http://vms-ca-sdm:8080/CAisd/pdmweb.exe")
-                time.sleep(2)
                 try:
-                    self.driver.find_element(By.NAME, "USERNAME")
+                    # Espera curta de até 1.5s para ver se o campo de login carrega.
+                    # Se NÃO carregar (TimeoutException), fomos redirecionados direto para o sistema.
+                    WebDriverWait(self.driver, 1.5).until(
+                        EC.presence_of_element_located((By.NAME, "USERNAME"))
+                    )
                     self.log_callback(f"[Navegador {self.thread_id}] Cookies expirados. Login necessario.")
                 except Exception:
                     self.log_callback(f"[Navegador {self.thread_id}] [OK] Sessao restaurada com sucesso via cookies.")
@@ -615,26 +617,35 @@ class AutomationOrchestrator:
                     # Executa busca no botão Go
                     busca_ok = False
                     self.log(f"[Navegador {thread_id}] [PLANO A] Buscando chamado {id_chamado}...")
-                    busca_ok = scraper.buscar_no_gobtn(id_chamado, valor_ticket, timeout_busca=self.timeout_busca)
-                    
-                    if busca_ok:
-                        WebDriverWait(session.driver, 12).until(lambda d: len(d.window_handles) > 1)
-                        with self.stats_lock:
-                            self.stats['plano_a'] += 1
-                        self.log(f"[Navegador {thread_id}] [PLANO A] OK - Popup detectado.")
-                    else:
+                    try:
+                        busca_ok = scraper.buscar_no_gobtn(id_chamado, valor_ticket, timeout_busca=self.timeout_busca)
+                        if busca_ok:
+                            # Se o chamado não existe, o CA SDM exibe um alerta de erro em vez de abrir popup.
+                            # Reduzir este tempo para 4.5 segundos evita esperas desnecessárias.
+                            WebDriverWait(session.driver, 4.5).until(lambda d: len(d.window_handles) > 1)
+                            with self.stats_lock:
+                                self.stats['plano_a'] += 1
+                            self.log(f"[Navegador {thread_id}] [PLANO A] OK - Popup detectado.")
+                        else:
+                            busca_ok = False
+                    except Exception:
+                        busca_ok = False
+
+                    if not busca_ok:
                         # PLANO B
                         self.log(f"[Navegador {thread_id}] [PLANO B] Recriando sessao...")
                         session.fechar_driver()
                         session.inicializar_driver()
                         session.fechar_alertas("plano B pré-busca")
-                        busca_ok = scraper.buscar_no_gobtn(id_chamado, valor_ticket, timeout_busca=self.timeout_busca + 4)
-                        
-                        if busca_ok:
-                            WebDriverWait(session.driver, 15).until(lambda d: len(d.window_handles) > 1)
-                            with self.stats_lock:
-                                self.stats['plano_b'] += 1
-                            self.log(f"[Navegador {thread_id}] [PLANO B] OK - Popup detectado.")
+                        try:
+                            busca_ok = scraper.buscar_no_gobtn(id_chamado, valor_ticket, timeout_busca=self.timeout_busca + 4)
+                            if busca_ok:
+                                WebDriverWait(session.driver, 6).until(lambda d: len(d.window_handles) > 1)
+                                with self.stats_lock:
+                                    self.stats['plano_b'] += 1
+                                self.log(f"[Navegador {thread_id}] [PLANO B] OK - Popup detectado.")
+                        except Exception:
+                            busca_ok = False
 
                     if not busca_ok:
                         self.log(f"[Navegador {thread_id}] Linha {idx}: [AVISO] Chamado nao encontrado no CA SDM.")

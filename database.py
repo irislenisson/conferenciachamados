@@ -62,23 +62,25 @@ def inicializar_db():
         )
     ''')
     
-    # Popula dados iniciais de mapeamento se a tabela estiver vazia
-    cursor.execute('SELECT COUNT(*) as count FROM mapeamento_torres')
-    if cursor.fetchone()['count'] == 0:
-        default_mappings = [
-            ('SERVICE DESK NIVEL', 'N1'),
-            ('TORRE A', 'A'),
-            ('TORRE B', 'B'),
-            ('TORRE C', 'C'),
-            ('COEIN', 'COEIN'),
-            ('GESTAO DE DADOS', 'BI'),
-            ('GESTÃO DE DADOS', 'BI'),
-            ('BI', 'BI')
-        ]
-        cursor.executemany('''
+    # Popula dados iniciais de mapeamento garantindo que as regras padrão existam
+    default_mappings = [
+        ('SERVICE DESK NIVEL', 'N1'),
+        ('SERVICE DESK 1° NIVEL', 'N1'),
+        ('SERVICE DESK 1º NIVEL', 'N1'),
+        ('TORRE A', 'A'),
+        ('TORRE B', 'B'),
+        ('TORRE C', 'C'),
+        ('COEIN', 'COEIN'),
+        ('GESTAO DE DADOS', 'BI'),
+        ('GESTÃO DE DADOS', 'BI'),
+        ('BI', 'BI')
+    ]
+    for grupo, torre in default_mappings:
+        cursor.execute('''
             INSERT INTO mapeamento_torres (grupo_match, torre)
             VALUES (?, ?)
-        ''', default_mappings)
+            ON CONFLICT(grupo_match) DO UPDATE SET torre = excluded.torre
+        ''', (grupo.upper(), torre.upper()))
     
     conn.commit()
     conn.close()
