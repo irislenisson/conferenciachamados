@@ -1,0 +1,35 @@
+# Arquivos sensíveis - NUNCA versionar
+.env
+credentials.json
+
+# Ambiente virtual Python
+.venv/
+venv/
+env/
+
+# Cache Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Distribuição / empacotamento
+dist/
+build/
+*.egg-info/
+
+# Logs e temporários
+*.log
+*.tmp
+progresso.json
+
+# IDEs
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Sistema operacional
+.DS_Store
+Thumbs.db

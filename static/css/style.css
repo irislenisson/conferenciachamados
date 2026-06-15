@@ -1,0 +1,238 @@
+:root {
+    --bg-color: #f4f6f9;
+    --card-bg: #ffffff;
+    --primary-color: #004b87;
+    --primary-hover: #003366;
+    --secondary-color: #1a7a4a;
+    --secondary-hover: #145f38;
+    --text-main: #333333;
+    --text-muted: #666666;
+    --border-color: #e0e6ed;
+    --console-bg: #1e1e1e;
+    --console-text: #cccccc;
+
+    /* Cores de log */
+    --log-ok:      #00cc55;
+    --log-erro:    #ff4d4d;
+    --log-aviso:   #ffbb33;
+    --log-plano-b: #ff8c00;
+    --log-info:    #44aaff;
+    --log-sistema: #888888;
+    --log-default: #cccccc;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: var(--bg-color);
+    color: var(--text-main);
+    margin: 0;
+    padding: 0;
+}
+
+.app-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+.app-header {
+    text-align: center;
+    margin-bottom: 30px;
+    border-bottom: 2px solid var(--border-color);
+    padding-bottom: 15px;
+}
+
+.app-header h1 {
+    color: var(--primary-color);
+    margin: 0 0 5px 0;
+}
+
+.app-content {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+}
+
+.card {
+    background: var(--card-bg);
+    border-radius: 8px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+    padding: 20px;
+    border: 1px solid var(--border-color);
+}
+
+.card-console {
+    grid-column: span 2;
+}
+
+.card h2 {
+    font-size: 1.2rem;
+    margin-top: 0;
+    color: var(--primary-color);
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 10px;
+}
+
+/* ─── Botões ──────────────────────────────────────────────── */
+.btn-group {
+    display: flex;
+    gap: 10px;
+    margin-top: 15px;
+    flex-wrap: wrap;
+}
+
+.btn-primary {
+    background-color: var(--primary-color);
+    color: white;
+    border: none;
+    padding: 12px 24px;
+    font-size: 1rem;
+    border-radius: 5px;
+    cursor: pointer;
+    flex: 1;
+    font-weight: bold;
+    transition: background 0.2s;
+}
+
+.btn-primary:hover:not(:disabled) {
+    background-color: var(--primary-hover);
+}
+
+.btn-primary:disabled {
+    background-color: #8a9bb0;
+    cursor: not-allowed;
+    animation: pulsar 1.5s ease-in-out infinite;
+}
+
+.btn-secondary {
+    background-color: var(--secondary-color);
+    color: white;
+    border: none;
+    padding: 12px 20px;
+    font-size: 0.95rem;
+    border-radius: 5px;
+    cursor: pointer;
+    font-weight: bold;
+    transition: background 0.2s;
+    white-space: nowrap;
+}
+
+.btn-secondary:hover:not(:disabled) {
+    background-color: var(--secondary-hover);
+}
+
+.btn-secondary:disabled {
+    background-color: #8a9bb0;
+    cursor: not-allowed;
+}
+
+.btn-link {
+    background: none;
+    border: none;
+    color: var(--primary-color);
+    cursor: pointer;
+    font-size: 0.85rem;
+    text-decoration: underline;
+    padding: 0 0 0 8px;
+}
+
+@keyframes pulsar {
+    0%   { opacity: 1; }
+    50%  { opacity: 0.6; }
+    100% { opacity: 1; }
+}
+
+/* ─── Barra de progresso ──────────────────────────────────── */
+.progress-container {
+    margin: 14px 0 4px 0;
+}
+
+.progress-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin-bottom: 5px;
+}
+
+.progress-bar-bg {
+    background: #e0e6ed;
+    border-radius: 6px;
+    height: 10px;
+    overflow: hidden;
+}
+
+.progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary-color), #0077cc);
+    border-radius: 6px;
+    transition: width 0.4s ease;
+}
+
+/* ─── Banner de progresso salvo ───────────────────────────── */
+.banner-info {
+    margin-top: 12px;
+    padding: 10px 14px;
+    background: #e8f4fd;
+    border-left: 4px solid #0077cc;
+    border-radius: 4px;
+    font-size: 0.88rem;
+    color: #004b87;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+/* ─── Info e links ────────────────────────────────────────── */
+.info-group {
+    margin-bottom: 15px;
+}
+
+.badge {
+    background: #e2e8f0;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-family: monospace;
+}
+
+.link-planilha {
+    color: #107c41;
+    text-decoration: none;
+    font-weight: bold;
+}
+
+.nota-seguranca {
+    font-size: 0.85rem;
+    color: #a51d24;
+    background: #fdf2f2;
+    padding: 10px;
+    border-left: 4px solid #a51d24;
+    border-radius: 4px;
+}
+
+/* ─── Console ─────────────────────────────────────────────── */
+.console-box {
+    background-color: var(--console-bg);
+    color: var(--console-text);
+    font-family: 'Courier New', Courier, monospace;
+    padding: 15px;
+    border-radius: 5px;
+    height: 300px;
+    overflow-y: auto;
+    font-size: 0.88rem;
+    line-height: 1.5;
+}
+
+.log-line {
+    margin-bottom: 3px;
+    word-break: break-all;
+}
+
+/* ─── Cores dos logs por tipo ─────────────────────────────── */
+.log-ok      { color: var(--log-ok); }
+.log-erro    { color: var(--log-erro); }
+.log-aviso   { color: var(--log-aviso); }
+.log-plano-b { color: var(--log-plano-b); }
+.log-info    { color: var(--log-info); }
+.log-sistema { color: var(--log-sistema); }
+.log-default { color: var(--log-default); }

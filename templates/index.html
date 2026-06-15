@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistema de Conferência de Chamados</title>
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <header class="app-header">
+            <h1>Sistema Conferência Trabalho</h1>
+            <p>Automação de Validação Baseada em Planilha de Controle</p>
+        </header>
+
+        <main class="app-content">
+            <div class="card card-control">
+                <h2>Controle do Sistema</h2>
+                <p>Varre a coluna H em busca de chamados com status <strong>"PENDENTE"</strong> e realiza
+                a validação cruzada no CA SDM, preenchendo as colunas D, E e G quando aplicável.</p>
+
+                <!-- Barra de progresso -->
+                <div id="progress-container" class="progress-container" style="display:none;">
+                    <div class="progress-label">
+                        <span id="progress-text">Processando...</span>
+                        <span id="progress-percent">0%</span>
+                    </div>
+                    <div class="progress-bar-bg">
+                        <div id="progress-bar" class="progress-bar" style="width:0%"></div>
+                    </div>
+                </div>
+
+                <!-- Botões de ação -->
+                <div class="btn-group">
+                    <button id="btn-iniciar" class="btn-primary">Iniciar Conferência</button>
+                    <button id="btn-continuar" class="btn-secondary" style="display:none;">
+                        ↩ Continuar de onde parou
+                    </button>
+                </div>
+
+                <!-- Banner de progresso salvo -->
+                <div id="banner-progresso" class="banner-info" style="display:none;">
+                    <span id="banner-texto">Existe uma execução incompleta salva.</span>
+                    <button id="btn-limpar-prog" class="btn-link">Descartar</button>
+                </div>
+            </div>
+
+            <div class="card card-info">
+                <h2>Origem de Dados Ativa</h2>
+                <div class="info-group">
+                    <label>Ambiente Alvo:</label>
+                    <span class="badge badge-url">vms-ca-sdm:8080</span>
+                </div>
+                <div class="info-group">
+                    <label>Planilha Integrada:</label>
+                    <a href="https://docs.google.com/spreadsheets/d/1ETTEHL0yJ7Y4qaAHqR7cSktEgmsRH6DkWzVkABMI8fU/"
+                       target="_blank" class="link-planilha">Acessar Google Sheets ↗</a>
+                </div>
+                <p class="nota-seguranca">
+                    <strong>Nota técnica:</strong> A coluna H opera em modo <em>Somente Leitura</em>.
+                    As colunas gravadas automaticamente são:
+                    <strong>D</strong> (Torre), <strong>E</strong> (Data Abertura) e <strong>G</strong> (Data Resolução).
+                </p>
+            </div>
+
+            <div class="card card-console">
+                <h2>Console de Execução</h2>
+                <div id="console-logs" class="console-box">
+                    <div class="log-line log-sistema">&gt; Sistema pronto para execução. Aguardando comando...</div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+</body>
+</html>
