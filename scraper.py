@@ -183,15 +183,15 @@ def iniciar_automacao(socketio_emit_callback=None, ja_processados=None):
         g = grupo_raw.strip().upper()
         if "SERVICE DESK" in g and "NIVEL" in g:
             return "N1"
-        if g.startswith("TORRE A"):
+        if "TORRE A" in g:
             return "A"
-        if g.startswith("TORRE B"):
+        if "TORRE B" in g:
             return "B"
-        if g.startswith("TORRE C"):
+        if "TORRE C" in g:
             return "C"
-        if g.startswith("COEIN"):
+        if "COEIN" in g:
             return "COEIN"
-        if "GESTAO DE DADOS" in g or "GEST\u00c3O DE DADOS" in g:
+        if "GESTAO DE DADOS" in g or "GEST\u00c3O DE DADOS" in g or "BI" in g:
             return "BI"
         return ""
 
@@ -436,12 +436,9 @@ def iniciar_automacao(socketio_emit_callback=None, ja_processados=None):
             if status_h.upper() != "PENDENTE":
                 continue
 
-            # Se ja foi processado em execucao anterior, pula
-            if id_chamado in ja_processados:
-                emitir_log(f"Linha {index}: [OK] Chamado {id_chamado} ja processado em execucao anterior. Pulando.")
-                if socketio_emit_callback:
-                    socketio_emit_callback('progresso', {'atual': len(ja_processados), 'total': total_pendentes})
-                continue
+            # Não pula chamados processados anteriormente, pois o critério é ser PENDENTE na planilha
+            # ja_processados rastreia o progresso da execução atual para atualizar a barra de progresso
+            ja_processados.add(id_chamado)
 
             emitir_log(f"\n{'-'*55}")
             emitir_log(f"[LINHA {index}] {id_chamado} | Status H: {status_h}")
