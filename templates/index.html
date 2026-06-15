@@ -32,7 +32,7 @@
         <!-- Grade de Conteúdo Principal -->
         <main class="app-grid">
             
-            <!-- Coluna da Esquerda: Configurações e Origem -->
+            <!-- Coluna da Esquerda: Configurações, Mapeamento e Origem -->
             <div class="grid-col grid-col-sidebar">
                 
                 <!-- Card de Controle e Configurações -->
@@ -60,7 +60,7 @@
                             ⚠️ <strong>Aviso:</strong> Usar múltiplos navegadores exige cookies isolados por sessão para evitar interferência.
                         </div>
 
-                        <!-- Novas Configurações: URL de Webhook e Timeouts -->
+                        <!-- Configurações: URL de Webhook e Timeouts -->
                         <div class="config-group-inputs">
                             <div class="input-row">
                                 <label for="webhook-url">URL do Webhook (JSON POST):</label>
@@ -91,12 +91,12 @@
                         </div>
                     </div>
 
-                    <!-- Botões de ação -->
+                    <!-- Botões de ação (com pausa e parada adicionados) -->
                     <div class="btn-group">
                         <button id="btn-iniciar" class="btn-primary">Iniciar Conferência</button>
-                        <button id="btn-continuar" class="btn-secondary" style="display:none;">
-                            ↩ Continuar
-                        </button>
+                        <button id="btn-continuar" class="btn-secondary" style="display:none;">↩ Continuar</button>
+                        <button id="btn-pausar" class="btn-warning" style="display:none;">⏸ Pausar</button>
+                        <button id="btn-parar" class="btn-danger" style="display:none;">🛑 Cancelar</button>
                     </div>
 
                     <!-- Banner de progresso salvo -->
@@ -104,6 +104,35 @@
                         <span id="banner-texto">Existe uma execução incompleta salva.</span>
                         <button id="btn-limpar-prog" class="btn-link">Descartar</button>
                     </div>
+                </div>
+
+                <!-- Card de Gerenciador de Mapeamentos de Torres -->
+                <div class="card card-mappings">
+                    <h2>Mapeamento de Torres</h2>
+                    <p class="section-desc">Mapeie termos do grupo do CA SDM para a Torre (substring match).</p>
+                    
+                    <div class="table-container mappings-table-container">
+                        <table class="mappings-table">
+                            <thead>
+                                <tr>
+                                    <th>Termo do Grupo</th>
+                                    <th>Torre</th>
+                                    <th style="text-align: right;">Ações</th>
+                                </tr>
+                            </thead>
+                            <tbody id="mappings-tabela-corpo">
+                                <tr>
+                                    <td colspan="3" class="text-center">Carregando mapeamentos...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <form id="form-mapeamento" class="mappings-form">
+                        <input type="text" id="map-grupo" placeholder="Termo do grupo (Ex: TORRE A)" required>
+                        <input type="text" id="map-torre" placeholder="Letra (Ex: A)" required>
+                        <button type="submit" class="btn-add-map">➕</button>
+                    </form>
                 </div>
 
                 <!-- Card de Origem de Dados -->
@@ -145,9 +174,9 @@
                             <span class="metric-val" id="metric-aviso">0</span>
                             <span class="metric-lbl">Avisos</span>
                         </div>
-                        <div class="metric-card metric-error-card">
+                        <div class="metric-card metric-error-card" id="metric-erro-card" style="cursor: pointer;" title="Clique para ver prints e detalhes dos erros">
                             <span class="metric-val" id="metric-erro">0</span>
-                            <span class="metric-lbl">Erros</span>
+                            <span class="metric-lbl">Erros 🔍</span>
                         </div>
                         <div class="metric-card">
                             <span class="metric-val" id="metric-tempo">0.0s</span>
@@ -208,6 +237,21 @@
                 
             </div>
         </main>
+    </div>
+
+    <!-- Modal de Auditoria de Erros (Prints do Selenium) -->
+    <div id="modal-erros" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Detalhamento de Erros e Prints de Auditoria</h3>
+                <button class="modal-close" id="btn-fechar-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="modal-erros-lista" class="erros-lista-container">
+                    <p class="text-center">Nenhum erro detalhado disponível para esta execução.</p>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script src="{{ url_for('static', filename='js/script.js') }}"></script>

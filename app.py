@@ -1,9 +1,9 @@
 import os
 import json
 import threading
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO
-from scraper import iniciar_automacao
+from scraper import iniciar_automacao, pausar_automacao, cancelar_automacao
 import database
 
 PROGRESS_FILE = 'progresso.json'
@@ -54,6 +54,54 @@ def api_historico():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+
+# ─── Mapeamento CRUD Endpoints ───────────────────────────────────────────
+
+@app.route('/api/mapeamentos', methods=['GET'])
+def api_get_mapeamentos():
+    try:
+        dados = database.listar_mapeamentos()
+        return jsonify(dados)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/mapeamentos', methods=['POST'])
+def api_post_mapeamento():
+    try:
+        req_data = request.json or {}
+        grupo_match = req_data.get('grupo_match', '')
+        torre = req_data.get('torre', '')
+        if not grupo_match or not torre:
+            return jsonify({'error': 'grupo_match e torre sao obrigatorios'}), 400
+        
+        success = database.inserir_mapeamento(grupo_match, torre)
+        return jsonify({'success': success})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/mapeamentos/<int:mapping_id>', methods=['DELETE'])
+def api_delete_mapeamento(mapping_id):
+    try:
+        database.deletar_mapeamento(mapping_id)
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ─── Endpoint de Auditoria de Erros (Captura de Tela base64) ──────────────
+
+@app.route('/api/execucoes/<int:exec_id>/erros', methods=['GET'])
+def api_get_erros_execucao(exec_id):
+    try:
+        dados = database.listar_erros_execucao(exec_id)
+        return jsonify(dados)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ─── Execução e Controles do Scraper ─────────────────────────────────────
 
 def _roda_thread(ja_processados, headless, num_threads, webhook_url, timeout_busca, timeout_pagina):
     """Função executada na thread de automação. Garante liberação da flag ao final."""
@@ -134,6 +182,28 @@ def handle_limpar():
     if os.path.exists(PROGRESS_FILE):
         os.remove(PROGRESS_FILE)
     socketio.emit('progresso_limpo', {})
+
+
+@socketio.on('pausar_conferencia')
+def handle_pausar():
+    """Pausa a execução do scraper."""
+    pausar_automacao(True)
+    socketio.emit('log_message', {'data': '[AVISO] Fluxo PAUSADO pelo usuario. Conclusao do chamado atual em andamento...'})
+
+
+@socketio.on('retomar_conferencia')
+def handle_retomar():
+    """Retoma a execução do scraper."""
+    pausar_automacao(False)
+    socketio.emit('log_message', {'data': '[AVISO] Fluxo RETOMADO pelo usuario.'})
+
+
+@socketio.on('parar_conferencia')
+def handle_parar():
+    """Para a execução do scraper imediatamente."""
+    cancelar_automacao()
+    pausar_automacao(False)  # Desbloqueia caso esteja em pausa
+    socketio.emit('log_message', {'data': '[AVISO] Execucao CANCELADA pelo usuario. Finalizando navegadores ativos...'})
 
 
 # Inicializa as tabelas do banco no arranque do servidor

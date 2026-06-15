@@ -5,6 +5,7 @@ import json
 import threading
 from datetime import datetime
 import urllib.request
+import random
 
 # Garante que o terminal aceita UTF-8 mesmo em Windows (CP1252)
 try:
@@ -33,6 +34,28 @@ STATUS_RESOLVIDOS = {
     "ENCERRADO", "ENCERRADA",
 }
 
+# ─── Flags globais para Controle de Fluxo (Pausar / Cancelar) ─────────────────
+_automacao_pausada = False
+_automacao_cancelada = False
+_fluxo_lock = threading.Lock()
+
+def pausar_automacao(estado: bool):
+    global _automacao_pausada
+    with _fluxo_lock:
+        _automacao_pausada = estado
+
+def cancelar_automacao():
+    global _automacao_cancelada
+    with _fluxo_lock:
+        _automacao_cancelada = True
+
+def resetar_fluxo():
+    global _automacao_pausada, _automacao_cancelada
+    with _fluxo_lock:
+        _automacao_pausada = False
+        _automacao_cancelada = False
+
+
 class SheetsService:
     """Serviço para gerenciar conexão e manipulação da planilha Google Sheets."""
     def __init__(self, credentials_path, sheets_url, log_callback):
@@ -58,9 +81,22 @@ class SheetsService:
         with self.lock:
             return self.worksheet.get_all_values()
 
-    def atualizar_celulas(self, cells_to_update):
-        with self.lock:
-            self.worksheet.update_cells(cells_to_update)
+    def atualizar_celulas(self, cells_to_update, max_tentativas=5):
+        """Atualiza células no Google Sheets com retentativas e backoff exponencial."""
+        for tentativa in range(1, max_tentativas + 1):
+            try:
+                with self.lock:
+                    self.worksheet.update_cells(cells_to_update)
+                return True
+            except Exception as e:
+                if tentativa == max_tentativas:
+                    self.log_callback(f"[SHEETS] [ERRO CRITICO] Falha ao gravar dados apos {max_tentativas} tentativas: {str(e)}")
+                    raise e
+                
+                # Backoff exponencial com jitter
+                wait_time = (2 ** tentativa) + random.uniform(0.1, 1.0)
+                self.log_callback(f"[SHEETS] [AVISO] Limite de cota ou erro de conexao. Re-tentando em {wait_time:.1f} segundos (Tentativa {tentativa}/{max_tentativas})...")
+                time.sleep(wait_time)
 
 
 class CASDMSession:
@@ -195,9 +231,10 @@ class CASDMSession:
 
 class CASDMScraper:
     """Executa buscas e extrai detalhes dos chamados no CA SDM."""
-    def __init__(self, session: CASDMSession, log_callback):
+    def __init__(self, session: CASDMSession, log_callback, mapeamentos_cache):
         self.session = session
         self.log_callback = log_callback
+        self.mapeamentos_cache = mapeamentos_cache
 
     def buscar_no_gobtn(self, id_chamado, valor_ticket, timeout_busca=8):
         driver = self.session.driver
@@ -231,18 +268,11 @@ class CASDMScraper:
         if not grupo_raw:
             return ""
         g = grupo_raw.strip().upper()
-        if "SERVICE DESK" in g and "NIVEL" in g:
-            return "N1"
-        if "TORRE A" in g:
-            return "A"
-        if "TORRE B" in g:
-            return "B"
-        if "TORRE C" in g:
-            return "C"
-        if "COEIN" in g:
-            return "COEIN"
-        if "GESTAO DE DADOS" in g or "GEST\u00c3O DE DADOS" in g or "BI" in g:
-            return "BI"
+        # Busca dinamicamente nos mapeamentos cadastrados no banco de dados SQLite
+        for mapping in self.mapeamentos_cache:
+            match_str = mapping['grupo_match'].strip().upper()
+            if match_str in g:
+                return mapping['torre']
         return ""
 
     def extrair_dados_popup(self, id_chamado, index, data_torre_atual, data_envio_atual, grupos_nao_mapeados, timeout_pagina=15):
@@ -413,6 +443,7 @@ class AutomationOrchestrator:
         self.grupos_nao_mapeados = set()
         self.duplicados = {}
         self.total_pendentes = 0
+        self.mapeamentos_cache = []
         
         # Estatísticas de execução
         self.stats = {
@@ -453,7 +484,7 @@ class AutomationOrchestrator:
         if not self.webhook_url:
             return
         payload = {
-            "status": "sucesso" if self.stats['erros'] == 0 else "concluido_com_erros",
+            "status": "cancelado" if _automacao_cancelada else ("sucesso" if self.stats['erros'] == 0 else "concluido_com_erros"),
             "data_inicio": self.data_inicio_str,
             "tempo_total": round(tempo_total, 2),
             "total_chamados": self.total_pendentes,
@@ -481,7 +512,7 @@ class AutomationOrchestrator:
     def worker_thread(self, thread_id, chunk_indices, dados, sheets_service, ca_email, ca_password):
         # Inicializa sessão do CA SDM
         session = CASDMSession(ca_email, ca_password, thread_id, self.headless, self.log)
-        scraper = CASDMScraper(session, self.log)
+        scraper = CASDMScraper(session, self.log, self.mapeamentos_cache)
         
         try:
             session.inicializar_driver()
@@ -492,6 +523,21 @@ class AutomationOrchestrator:
             return
 
         for idx in chunk_indices:
+            # ─── Verificações de Controle de Fluxo (Pausar / Cancelar) ─────────
+            if _automacao_cancelada:
+                self.log(f"[Navegador {thread_id}] Execucao cancelada. Parando thread...")
+                break
+            
+            while _automacao_pausada:
+                if _automacao_cancelada:
+                    break
+                self.log(f"[Navegador {thread_id}] Em pausa. Aguardando liberacao...")
+                time.sleep(2)
+                
+            if _automacao_cancelada:
+                self.log(f"[Navegador {thread_id}] Execucao cancelada. Parando thread...")
+                break
+
             # Dupla checagem para evitar concorrência redundante
             with self.progress_lock:
                 if idx in self.ja_processados:
@@ -528,7 +574,7 @@ class AutomationOrchestrator:
                         self.socketio_emit_callback('progresso', {'atual': len(self.ja_processados), 'total': self.total_pendentes})
                 continue
 
-            # --- PROCESSAMENTO DO CHAMADO COM TRATAMENTO E AUTO-RECUPERAÇÃO (Self-Healing) ---
+            # --- PROCESSAMENTO DO CHAMADO COM TRATAMENTO E AUTO-RECUPERAÇÃO ---
             tentativa_processo = 0
             processamento_completo = False
 
@@ -551,7 +597,6 @@ class AutomationOrchestrator:
                                 session.driver.close()
                         session.driver.switch_to.window(session.main_window_handle)
                     except Exception:
-                        # Se falhar a troca de janelas, força recriação total
                         session.fechar_driver()
                         session.inicializar_driver()
 
@@ -583,6 +628,15 @@ class AutomationOrchestrator:
                         self.log(f"[Navegador {thread_id}] Linha {idx}: [AVISO] Chamado nao encontrado no CA SDM.")
                         with self.stats_lock:
                             self.stats['avisos'] += 1
+                        
+                        # Captura print base64 de erro para auditoria
+                        scr_b64 = ""
+                        try: scr_b64 = session.driver.get_screenshot_as_base64()
+                        except Exception: pass
+                        database.registrar_erro_detalhado(
+                            self.exec_id, idx, id_chamado, 
+                            "Chamado nao encontrado no CA SDM (Busca falhou)", scr_b64
+                        )
                         processamento_completo = True
                         continue
 
@@ -640,10 +694,10 @@ class AutomationOrchestrator:
                             self.log(f"[Navegador {thread_id}] Linha {idx}: [OK] Coluna G preenchida -> {val_g}")
 
                         if cells_to_update:
+                            # Gravação no sheets com retentativas/backoff
                             sheets_service.atualizar_celulas(cells_to_update)
                             self.log(f"[Navegador {thread_id}] Linha {idx}: [OK] Google Sheets sincronizado.")
                         else:
-                            # Se não atualizou nenhuma coluna mas obteve dados (ex: colunas já preenchidas corretamente)
                             with self.stats_lock:
                                 self.stats['sucessos'] += 1
                             self.log(f"[Navegador {thread_id}] Linha {idx}: [OK] Verificado sem pendências de atualização.")
@@ -662,13 +716,33 @@ class AutomationOrchestrator:
 
                 except (WebDriverException, NoSuchWindowException) as e_drv:
                     self.log(f"[Navegador {thread_id}] [AVISO] Falha de WebDriver na tentativa {tentativa_processo}: {str(e_drv)[:80]}")
+                    
+                    # Salva print e log do erro em erros_detalhes
+                    scr_b64 = ""
+                    try: scr_b64 = session.driver.get_screenshot_as_base64()
+                    except Exception: pass
+                    database.registrar_erro_detalhado(
+                        self.exec_id, idx, id_chamado, 
+                        f"Falha de WebDriver: {str(e_drv)}", scr_b64
+                    )
+                    
                     if tentativa_processo >= 2:
                         self.log(f"[Navegador {thread_id}] [ERRO] Desistindo do chamado {id_chamado} apos falhas repetidas.")
                         with self.stats_lock:
                             self.stats['erros'] += 1
                         processamento_completo = True
                 except Exception as e_gen:
-                    self.log(f"[Navegador {thread_id}] [ERRO] Falha geral no processamento: {str(e_gen)}")
+                    self.log(f"[Navegador {thread_id}] [ERRO] Falha geral no chamado {id_chamado}: {str(e_gen)}")
+                    
+                    # Salva print e log do erro em erros_detalhes
+                    scr_b64 = ""
+                    try: scr_b64 = session.driver.get_screenshot_as_base64()
+                    except Exception: pass
+                    database.registrar_erro_detalhado(
+                        self.exec_id, idx, id_chamado, 
+                        f"Erro Geral: {str(e_gen)}", scr_b64
+                    )
+                    
                     with self.stats_lock:
                         self.stats['erros'] += 1
                     processamento_completo = True
@@ -685,9 +759,11 @@ class AutomationOrchestrator:
 
     def orquestrar(self):
         start_time = time.time()
+        resetar_fluxo()
         
-        # Inicializa banco de dados
+        # Inicializa banco de dados e carrega cache de mapeamentos
         database.inicializar_db()
+        self.mapeamentos_cache = database.listar_mapeamentos()
         self.exec_id = database.criar_execucao(self.data_inicio_str)
 
         try:
@@ -729,7 +805,6 @@ class AutomationOrchestrator:
 
             if not indices_para_processar:
                 self.log("[FIM] Nenhum chamado pendente restante para processamento.")
-                # Conclui histórico
                 database.atualizar_execucao(self.exec_id, 0.0, 0, 0, 0, 0, 0, 0, 0)
                 return
 
@@ -772,8 +847,9 @@ class AutomationOrchestrator:
                 col_g=self.stats['col_g']
             )
 
+            status_txt = "Varredura cancelada!" if _automacao_cancelada else "Varredura concluida!"
             self.log(f"\n{'='*55}")
-            self.log("[FIM] Varredura concluida!")
+            self.log(f"[FIM] {status_txt}")
             self.log(f"{'='*55}")
             self.log(f"  Chamados Processados : {self.stats['sucessos'] + self.stats['avisos'] + self.stats['erros']}")
             self.log(f"  Sucessos (Validados) : {self.stats['sucessos']}")
@@ -790,8 +866,8 @@ class AutomationOrchestrator:
             # Envia Webhook se configurado
             self.enviar_webhook(duration)
 
-            # Limpa progresso salvo ao concluir tudo com sucesso
-            if os.path.exists('progresso.json'):
+            # Limpa progresso salvo ao concluir tudo com sucesso (ou cancelamento explícito)
+            if not _automacao_pausada and os.path.exists('progresso.json'):
                 try:
                     os.remove('progresso.json')
                 except Exception:
@@ -801,7 +877,6 @@ class AutomationOrchestrator:
             import traceback
             err_tb = traceback.format_exc()
             self.log(f"[ERRO CRITICO] {str(e)}\n{err_tb}")
-            # Registra erro no banco de dados
             if self.exec_id:
                 database.atualizar_execucao(
                     exec_id=self.exec_id,
@@ -817,7 +892,6 @@ class AutomationOrchestrator:
 
 
 def iniciar_automacao(socketio_emit_callback=None, ja_processados=None, headless=True, num_threads=1, webhook_url=None, timeout_busca=8, timeout_pagina=15):
-    """Ponto de entrada compatível com a chamada original do Flask em app.py."""
     orchestrator = AutomationOrchestrator(
         socketio_emit_callback=socketio_emit_callback,
         ja_processados=ja_processados,

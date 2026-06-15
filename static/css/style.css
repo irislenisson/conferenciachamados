@@ -1,7 +1,7 @@
 /* ─── Variáveis Globais de Design (Temas Harmonizados) ─── */
 :root {
     --bg-color: #f8fafc;
-    --card-bg: rgba(255, 255, 255, 0.9);
+    --card-bg: rgba(255, 255, 255, 0.95);
     --primary-color: #1e3a8a;
     --primary-hover: #1e40af;
     --secondary-color: #059669;
@@ -25,7 +25,7 @@
 
 [data-theme="dark"] {
     --bg-color: #0b0f19;
-    --card-bg: rgba(17, 24, 39, 0.9);
+    --card-bg: rgba(17, 24, 39, 0.95);
     --primary-color: #3b82f6;
     --primary-hover: #60a5fa;
     --secondary-color: #10b981;
@@ -289,18 +289,19 @@ h1, h2, h3 {
     line-height: 1.4;
 }
 
-/* ─── Botões de Controle ─── */
+/* ─── Botões de Controle e Fluxo ─── */
 .btn-group {
     display: flex;
-    gap: 10px;
+    gap: 8px;
     margin-top: 20px;
+    flex-wrap: wrap;
 }
 
 .btn-primary {
     background-color: var(--primary-color);
     color: white;
     border: none;
-    padding: 12px 20px;
+    padding: 12px 18px;
     font-size: 0.95rem;
     border-radius: 8px;
     cursor: pointer;
@@ -337,6 +338,36 @@ h1, h2, h3 {
 
 .btn-secondary:hover:not(:disabled) {
     background-color: var(--secondary-hover);
+}
+
+.btn-warning {
+    background-color: var(--log-aviso);
+    color: white;
+    border: none;
+    padding: 12px 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: bold;
+    transition: background-color 0.2s;
+}
+
+.btn-warning:hover:not(:disabled) {
+    background-color: #d97706;
+}
+
+.btn-danger {
+    background-color: var(--log-erro);
+    color: white;
+    border: none;
+    padding: 12px 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: bold;
+    transition: background-color 0.2s;
+}
+
+.btn-danger:hover:not(:disabled) {
+    background-color: #dc2626;
 }
 
 .btn-link {
@@ -402,6 +433,94 @@ h1, h2, h3 {
     padding: 10px;
     border-radius: 4px;
     margin: 15px 0 0 0;
+}
+
+/* ─── Card de Gerenciamento de Mapeamentos ─── */
+.card-mappings p.section-desc {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin: -10px 0 12px 0;
+    line-height: 1.4;
+}
+
+.mappings-table-container {
+    max-height: 150px;
+    overflow-y: auto;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+}
+
+.mappings-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.78rem;
+    text-align: left;
+}
+
+.mappings-table th {
+    background: var(--bg-color);
+    color: var(--text-muted);
+    font-weight: 600;
+    padding: 6px 10px;
+    position: sticky;
+    top: 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.mappings-table td {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border-color);
+    word-break: break-all;
+}
+
+.btn-del-map {
+    background: none;
+    border: none;
+    color: var(--log-erro);
+    cursor: pointer;
+    font-size: 0.95rem;
+    padding: 0;
+}
+
+.btn-del-map:hover {
+    opacity: 0.8;
+}
+
+.mappings-form {
+    display: flex;
+    gap: 6px;
+    margin-top: 12px;
+}
+
+.mappings-form input {
+    background: var(--bg-color);
+    color: var(--text-main);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 7px 10px;
+    font-size: 0.8rem;
+    outline: none;
+    flex: 1;
+}
+
+.mappings-form input#map-torre {
+    max-width: 50px;
+    text-align: center;
+}
+
+.btn-add-map {
+    background-color: var(--secondary-color);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 12px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: bold;
+}
+
+.btn-add-map:hover {
+    background-color: var(--secondary-hover);
 }
 
 /* ─── Dashboard de Métricas ─── */
@@ -633,4 +752,124 @@ h1, h2, h3 {
     background: linear-gradient(90deg, var(--primary-color), var(--secondary-color));
     border-radius: 8px;
     transition: width 0.4s ease;
+}
+
+/* ─── Modal Overlay de Auditoria e Erros ─── */
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background-color: rgba(0, 0, 0, 0.65);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    backdrop-filter: blur(4px);
+    transition: opacity 0.2s ease;
+}
+
+.modal-content {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    width: 90%;
+    max-width: 800px;
+    max-height: 85vh;
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.2), 0 10px 10px -5px rgba(0, 0, 0, 0.2);
+    display: flex;
+    flex-direction: column;
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px 20px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.modal-header h3 {
+    margin: 0;
+    font-size: 1.15rem;
+    color: var(--primary-color);
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    font-size: 1.8rem;
+    cursor: pointer;
+    color: var(--text-muted);
+    line-height: 1;
+    padding: 0;
+}
+
+.modal-close:hover {
+    color: var(--text-main);
+}
+
+.modal-body {
+    padding: 20px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+/* Lista de erros do Modal */
+.erros-lista-container {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.error-card-item {
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 15px;
+    background: var(--bg-color);
+}
+
+.error-card-header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 10px;
+    border-bottom: 1px dashed var(--border-color);
+    padding-bottom: 6px;
+    font-size: 0.82rem;
+    color: var(--text-muted);
+}
+
+.error-card-header span {
+    font-weight: bold;
+    color: var(--text-main);
+}
+
+.error-card-msg {
+    font-size: 0.85rem;
+    color: #ef4444;
+    font-family: 'Courier New', Courier, monospace;
+    background: rgba(239, 68, 68, 0.05);
+    padding: 10px 12px;
+    border-left: 3px solid #ef4444;
+    border-radius: 4px;
+    margin-bottom: 12px;
+    word-break: break-word;
+}
+
+.error-card-img-box {
+    text-align: center;
+}
+
+.error-card-img {
+    max-width: 100%;
+    max-height: 280px;
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    cursor: zoom-in;
+    transition: transform 0.2s;
+}
+
+.error-card-img:hover {
+    transform: scale(1.015);
 }

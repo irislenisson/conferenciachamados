@@ -15,7 +15,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const warningParallel   = document.getElementById('warning-parallel');
     const btnExportar       = document.getElementById('btn-exportar');
 
-    // Novos Elementos
+    // Novos Elementos de Configuração e Cabeçalho
     const themeToggle       = document.getElementById('theme-toggle');
     const wsStatusDot       = document.getElementById('ws-status-dot');
     const wsStatusText      = document.getElementById('ws-status-text');
@@ -23,25 +23,43 @@ document.addEventListener('DOMContentLoaded', () => {
     const inputTimeoutBusca = document.getElementById('timeout-busca');
     const inputTimeoutPagina = document.getElementById('timeout-pagina');
     
+    // Novos Botões de Fluxo (Pausar / Parar)
+    const btnPausar        = document.getElementById('btn-pausar');
+    const btnParar         = document.getElementById('btn-parar');
+    
     // Métricas do Dashboard
     const metricTotal       = document.getElementById('metric-total');
     const metricSucesso     = document.getElementById('metric-sucesso');
     const metricAviso       = document.getElementById('metric-aviso');
     const metricErro        = document.getElementById('metric-erro');
+    const metricErroCard    = document.getElementById('metric-erro-card');
     const metricTempo       = document.getElementById('metric-tempo');
     const metricUpdates     = document.getElementById('metric-updates');
     
-    // Tabela de Histórico
+    // Tabela de Histórico e Mapeamentos
     const historicoTabelaCorpo = document.getElementById('historico-tabela-corpo');
+    const mappingsTabelaCorpo  = document.getElementById('mappings-tabela-corpo');
+    const formMapeamento       = document.getElementById('form-mapeamento');
+    const mapGrupoInput        = document.getElementById('map-grupo');
+    const mapTorreInput        = document.getElementById('map-torre');
+    
+    // Modal de Auditoria de Erros
+    const modalErros           = document.getElementById('modal-erros');
+    const btnFecharModal       = document.getElementById('btn-fechar-modal');
+    const modalErrosLista      = document.getElementById('modal-erros-lista');
     
     // Busca e Filtros de Console
     const logSearch         = document.getElementById('log-search');
     const filterButtons     = document.querySelectorAll('.btn-filter');
 
-    let currentLogFilter = 'all'; // 'all', 'ok', 'aviso', 'erro'
+    let currentLogFilter = 'all'; 
     let currentLogSearch = '';
+    let isPaused = false;
     
-    // Contadores locais para atualizar dashboard em tempo real
+    // Armazena a ID da execução ativa ou selecionada para auditoria de erros
+    let selectedExecId = null;
+
+    // Contadores de métricas em tempo real
     let countTotal = 0;
     let countSucesso = 0;
     let countAviso = 0;
@@ -134,7 +152,79 @@ document.addEventListener('DOMContentLoaded', () => {
         wsStatusText.textContent = 'Erro de Conexão';
     });
 
-    // ─── 4. Histórico SQLite (Carregar e Exibir) ───────────────────────
+    // ─── 4. Mapeamento de Torres Dinâmico (CRUD) ──────────────────────
+    const carregarMapeamentos = () => {
+        fetch('/api/mapeamentos')
+            .then(r => r.json())
+            .then(dados => {
+                if (!dados || dados.length === 0) {
+                    mappingsTabelaCorpo.innerHTML = `
+                        <tr>
+                            <td colspan="3" class="text-center">Nenhum mapeamento registrado.</td>
+                        </tr>`;
+                    return;
+                }
+                mappingsTabelaCorpo.innerHTML = '';
+                dados.forEach(item => {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td>${item.grupo_match}</td>
+                        <td><span class="badge">${item.torre}</span></td>
+                        <td style="text-align: right;">
+                            <button class="btn-del-map" data-id="${item.id}" title="Excluir mapeamento">🗑️</button>
+                        </td>
+                    `;
+                    // Vincula exclusão
+                    tr.querySelector('.btn-del-map').addEventListener('click', () => {
+                        deletarMapeamento(item.id);
+                    });
+                    mappingsTabelaCorpo.appendChild(tr);
+                });
+            })
+            .catch(err => console.error("Erro ao carregar mapeamentos:", err));
+    };
+
+    const deletarMapeamento = (id) => {
+        if (!confirm("Tem certeza que deseja excluir esta regra de mapeamento?")) return;
+        
+        fetch(`/api/mapeamentos/${id}`, { method: 'DELETE' })
+            .then(r => r.json())
+            .then(res => {
+                if (res.success) {
+                    carregarMapeamentos();
+                } else {
+                    alert("Erro ao excluir mapeamento: " + (res.error || "Erro desconhecido"));
+                }
+            })
+            .catch(err => console.error(err));
+    };
+
+    formMapeamento.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const grupo = mapGrupoInput.value.trim().toUpperCase();
+        const torre = mapTorreInput.value.trim().toUpperCase();
+        
+        fetch('/api/mapeamentos', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: json = JSON.stringify({ grupo_match: grupo, torre: torre })
+        })
+            .then(r => r.json())
+            .then(res => {
+                if (res.success) {
+                    mapGrupoInput.value = '';
+                    mapTorreInput.value = '';
+                    carregarMapeamentos();
+                } else {
+                    alert("Erro ao adicionar mapeamento: " + (res.error || "Erro desconhecido"));
+                }
+            })
+            .catch(err => console.error(err));
+    });
+
+    carregarMapeamentos();
+
+    // ─── 5. Histórico SQLite (Carregar e Exibir) ───────────────────────
     const carregarHistorico = () => {
         fetch('/api/historico')
             .then(r => r.json())
@@ -171,8 +261,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         <td>D: ${exec.col_d} • E: ${exec.col_e} • G: ${exec.col_g}</td>
                     `;
                     
-                    // Permite que o usuário clique para rever as métricas antigas no dashboard
                     tr.addEventListener('click', () => {
+                        selectedExecId = exec.id; // Atualiza ID da execução selecionada
                         exibirMetricasNoDashboard({
                             total: exec.total_chamados,
                             sucessos: exec.sucessos,
@@ -187,10 +277,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     
                     historicoTabelaCorpo.appendChild(tr);
                 });
+                
+                // Por padrão, se não há ID ativa selecionada, seleciona a mais recente
+                if (!selectedExecId && dados.length > 0) {
+                    selectedExecId = dados[0].id;
+                }
             })
-            .catch(err => {
-                console.error("Erro ao ler historico:", err);
-            });
+            .catch(err => console.error("Erro ao ler historico:", err));
     };
 
     const exibirMetricasNoDashboard = (m) => {
@@ -202,10 +295,63 @@ document.addEventListener('DOMContentLoaded', () => {
         metricUpdates.innerHTML = `Colunas atualizadas: <span>D: ${m.col_d}</span> • <span>E: ${m.col_e}</span> • <span>G: ${m.col_g}</span>`;
     };
 
-    // Carrega o histórico assim que abre a página
     carregarHistorico();
 
-    // ─── 5. Resetar Métricas do Dashboard para Iniciar Run ──────────────
+    // ─── 6. Auditoria de Erros (Modal & Screenshots) ─────────────────
+    const abrirModalErros = () => {
+        if (!selectedExecId) {
+            alert("Selecione uma execução no histórico abaixo para auditar os erros.");
+            return;
+        }
+
+        modalErrosLista.innerHTML = `<p class="text-center">Carregando auditoria de erros da execucao #${selectedExecId}...</p>`;
+        modalErros.style.display = 'flex';
+
+        fetch(`/api/execucoes/${selectedExecId}/erros`)
+            .then(r => r.json())
+            .then(dados => {
+                if (!dados || dados.length === 0) {
+                    modalErrosLista.innerHTML = `<p class="text-center">Nenhum erro com print registrado para a execucao #${selectedExecId}.</p>`;
+                    return;
+                }
+
+                modalErrosLista.innerHTML = '';
+                dados.forEach(item => {
+                    const card = document.createElement('div');
+                    card.className = 'error-card-item';
+                    
+                    const imgTag = item.screenshot_base64 
+                        ? `<img src="data:image/png;base64,${item.screenshot_base64}" class="error-card-img" alt="Print de erro no CA SDM" onclick="window.open(this.src)">` 
+                        : `<p class="text-muted text-center" style="font-size:0.8rem; padding: 10px;">Captura de tela indisponível (Erro na inicialização do browser ou antes do carregamento).</p>`;
+
+                    card.innerHTML = `
+                        <div class="error-card-header">
+                            <span>Linha ${item.linha_planilha} • Chamado ${item.id_chamado}</span>
+                        </div>
+                        <div class="error-card-msg">${item.mensagem_erro}</div>
+                        <div class="error-card-img-box">
+                            ${imgTag}
+                        </div>
+                    `;
+                    modalErrosLista.appendChild(card);
+                });
+            })
+            .catch(err => {
+                modalErrosLista.innerHTML = `<p class="text-center text-danger">Erro ao carregar auditoria: ${err.message}</p>`;
+            });
+    };
+
+    metricErroCard.addEventListener('click', abrirModalErros);
+    btnFecharModal.addEventListener('click', () => { modalErros.style.display = 'none'; });
+    
+    // Fecha o modal ao clicar fora
+    window.addEventListener('click', (e) => {
+        if (e.target === modalErros) {
+            modalErros.style.display = 'none';
+        }
+    });
+
+    // ─── 7. Resetar Contadores Dashboard para Iniciar Run ──────────────
     const resetarContadoresDashboard = () => {
         countTotal = 0;
         countSucesso = 0;
@@ -227,11 +373,10 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     };
 
-    // ─── 6. Análise de Logs em Tempo Real (Atualização do Dashboard) ─────
+    // ─── 8. Análise de Logs em Tempo Real (Dashboard) ─────────────────
     const analisarMensagemDeLog = (texto) => {
         const t = texto.toLowerCase();
 
-        // Detecta total de pendentes
         if (t.includes('total de chamados pendentes na planilha:')) {
             const match = texto.match(/planilha:\s*(\d+)/i);
             if (match) {
@@ -240,7 +385,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
         
-        // Detecta incrementos nas colunas atualizadas
         if (t.includes('[ok] coluna d')) {
             countColD++;
             countSucesso++;
@@ -257,24 +401,21 @@ document.addEventListener('DOMContentLoaded', () => {
             countSucesso++;
         }
 
-        // Detecta Avisos
         if (t.includes('[aviso]') || t.includes('[nao localizado]') || t.includes('[timeout]')) {
             countAviso++;
         }
 
-        // Detecta Erros
         if (t.includes('[erro') || t.includes('erro:')) {
             countErro++;
         }
 
-        // Atualiza dashboard em tempo real
         metricSucesso.textContent = countSucesso;
         metricAviso.textContent = countAviso;
         metricErro.textContent = countErro;
         metricUpdates.innerHTML = `Colunas atualizadas: <span>D: ${countColD}</span> • <span>E: ${countColE}</span> • <span>G: ${countColG}</span>`;
     };
 
-    // ─── 7. Busca e Filtragem Avançada de Logs no Console ────────────────
+    // ─── 9. Busca e Filtragem Avançada de Logs no Console ────────────────
     const filtrarConsoleLogs = () => {
         const lines = consoleLogs.querySelectorAll('.log-line');
         lines.forEach(div => {
@@ -289,11 +430,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 classMatches = div.classList.contains('log-erro');
             }
 
-            if (textMatches && classMatches) {
-                div.style.display = 'block';
-            } else {
-                div.style.display = 'none';
-            }
+            div.style.display = (textMatches && classMatches) ? 'block' : 'none';
         });
     };
 
@@ -311,7 +448,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    // ─── 8. Tratamento Semântico de Classes de Log ───────────────────────
+    // ─── 10. Classificação Semântica das Mensagens de Log ────────────────
     function classificarLog(texto) {
         const t = texto.toLowerCase();
         if (t.includes('[ok]'))                          return 'log-ok';
@@ -332,7 +469,6 @@ document.addEventListener('DOMContentLoaded', () => {
         div.textContent = '> ' + texto;
         consoleLogs.appendChild(div);
         
-        // Aplica filtros correntes à nova linha
         const textMatches = currentLogSearch === '' || div.textContent.toLowerCase().includes(currentLogSearch);
         let classMatches = true;
         if (currentLogFilter === 'ok') classMatches = div.classList.contains('log-ok');
@@ -343,13 +479,23 @@ document.addEventListener('DOMContentLoaded', () => {
         consoleLogs.scrollTop = consoleLogs.scrollHeight;
     }
 
-    // ─── 9. Bloqueio e Liberação de UI ───────────────────────────────────
+    // ─── 11. Bloqueio e Liberação de UI ──────────────────────────────────
     function setBotoes(processando) {
         btnIniciar.disabled   = processando;
         btnContinuar.disabled = processando;
-        btnIniciar.textContent = processando
-            ? 'Processando...'
-            : 'Iniciar Conferência';
+        
+        if (processando) {
+            btnIniciar.textContent = 'Em execução...';
+            btnPausar.style.display = 'block';
+            btnParar.style.display = 'block';
+            btnPausar.textContent = '⏸ Pausar';
+            btnPausar.className = 'btn-warning';
+            isPaused = false;
+        } else {
+            btnIniciar.textContent = 'Iniciar Conferência';
+            btnPausar.style.display = 'none';
+            btnParar.style.display = 'none';
+        }
     }
 
     function limparProgresso() {
@@ -379,7 +525,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     verificarProgressoServidor();
 
-    // ─── 10. Botão: Iniciar (do zero) ────────────────────────────────────
+    // ─── 12. Botão: Iniciar (do zero) ────────────────────────────────────
     btnIniciar.addEventListener('click', () => {
         setBotoes(true);
         resetarContadoresDashboard();
@@ -398,7 +544,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    // ─── 11. Botão: Continuar de onde parou ──────────────────────────────
+    // ─── 13. Botão: Continuar de onde parou ──────────────────────────────
     btnContinuar.addEventListener('click', () => {
         setBotoes(true);
         progressContainer.style.display = 'block';
@@ -413,12 +559,38 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    // ─── 12. Botão: Descartar progresso salvo ────────────────────────────
+    // ─── 14. Botões de Fluxo: Pausar e Cancelar ─────────────────────────
+    btnPausar.addEventListener('click', () => {
+        if (!isPaused) {
+            // Solicita pausa
+            socket.emit('pausar_conferencia');
+            btnPausar.textContent = '▶️ Retomar';
+            btnPausar.className = 'btn-secondary';
+            isPaused = true;
+        } else {
+            // Solicita retomada
+            socket.emit('retomar_conferencia');
+            btnPausar.textContent = '⏸ Pausar';
+            btnPausar.className = 'btn-warning';
+            isPaused = false;
+        }
+    });
+
+    btnParar.addEventListener('click', () => {
+        if (confirm("Tem certeza que deseja cancelar a execucao corrente? Os navegadores serao finalizados.")) {
+            socket.emit('parar_conferencia');
+            btnPausar.disabled = true;
+            btnParar.disabled = true;
+            btnParar.textContent = 'Encerrando...';
+        }
+    });
+
+    // ─── 15. Botão: Descartar progresso salvo ────────────────────────────
     btnLimparProg.addEventListener('click', () => {
         socket.emit('limpar_progresso');
     });
 
-    // ─── 13. Botão: Exportar Logs ────────────────────────────────────────
+    // ─── 16. Botão: Exportar Logs ────────────────────────────────────────
     btnExportar.addEventListener('click', () => {
         const lines = Array.from(consoleLogs.querySelectorAll('.log-line'))
             .map(div => div.textContent.replace(/^>\s*/, ''))
@@ -435,7 +607,7 @@ document.addEventListener('DOMContentLoaded', () => {
         URL.revokeObjectURL(url);
     });
 
-    // ─── 14. Eventos do Servidor (Socket.IO) ─────────────────────────────
+    // ─── 17. Eventos do Servidor (Socket.IO) ─────────────────────────────
     socket.on('log_message', (msg) => {
         adicionarLog(msg.data);
         analisarMensagemDeLog(msg.data);
@@ -444,7 +616,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const t = msg.data.toLowerCase();
         if (t.includes('[fim]') || t.includes('varredura concluida') || t.includes('[erro critico]')) {
             setBotoes(false);
-            carregarHistorico(); // Recarrega a tabela de histórico SQLite
+            btnPausar.disabled = false;
+            btnParar.disabled = false;
+            btnParar.textContent = '🛑 Cancelar';
+            carregarHistorico(); 
         }
     });
 
@@ -462,6 +637,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     socket.on('automacao_concluida', () => {
         setBotoes(false);
+        btnPausar.disabled = false;
+        btnParar.disabled = false;
+        btnParar.textContent = '🛑 Cancelar';
         carregarHistorico();
     });
 
