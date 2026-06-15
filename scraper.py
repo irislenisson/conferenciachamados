@@ -436,9 +436,10 @@ def iniciar_automacao(socketio_emit_callback=None, ja_processados=None):
             if status_h.upper() != "PENDENTE":
                 continue
 
-            # Não pula chamados processados anteriormente, pois o critério é ser PENDENTE na planilha
-            # ja_processados rastreia o progresso da execução atual para atualizar a barra de progresso
-            ja_processados.add(id_chamado)
+            # Se ja foi processado nesta execucao ou em execucao anterior (por indice da linha), pula.
+            # Isso garante que se houver chamados com o mesmo ID em linhas diferentes, ambos serao processados.
+            if index in ja_processados:
+                continue
 
             emitir_log(f"\n{'-'*55}")
             emitir_log(f"[LINHA {index}] {id_chamado} | Status H: {status_h}")
@@ -453,7 +454,7 @@ def iniciar_automacao(socketio_emit_callback=None, ja_processados=None):
                 valor_ticket = "go_pr"
             else:
                 emitir_log(f"Linha {index}: [AVISO] Prefixo invalido '{id_chamado[0]}'. Pulando.")
-                ja_processados.add(id_chamado)
+                ja_processados.add(index)
                 salvar_progresso(total_pendentes)
                 if socketio_emit_callback:
                     socketio_emit_callback('progresso', {'atual': len(ja_processados), 'total': total_pendentes})
@@ -513,21 +514,21 @@ def iniciar_automacao(socketio_emit_callback=None, ja_processados=None):
                         emitir_log(f"   [PLANO B] OK - Popup aberto apos novo login.")
                     else:
                         emitir_log(f"   [PLANO B] FALHOU: Busca no gobtn falhou. Pulando chamado.")
-                        ja_processados.add(id_chamado)
+                        ja_processados.add(index)
                         salvar_progresso(total_pendentes)
                         if socketio_emit_callback:
                             socketio_emit_callback('progresso', {'atual': len(ja_processados), 'total': total_pendentes})
                         continue
                 except Exception as e_b:
                     emitir_log(f"   [PLANO B] FALHA CRITICA: {str(e_b)[:100]}. Pulando.")
-                    ja_processados.add(id_chamado)
+                    ja_processados.add(index)
                     salvar_progresso(total_pendentes)
                     if socketio_emit_callback:
                         socketio_emit_callback('progresso', {'atual': len(ja_processados), 'total': total_pendentes})
                     continue
 
             if not busca_ok:
-                ja_processados.add(id_chamado)
+                ja_processados.add(index)
                 salvar_progresso(total_pendentes)
                 if socketio_emit_callback:
                     socketio_emit_callback('progresso', {'atual': len(ja_processados), 'total': total_pendentes})
@@ -541,7 +542,7 @@ def iniciar_automacao(socketio_emit_callback=None, ja_processados=None):
                         break
             except Exception as e:
                 emitir_log(f"Linha {index}: Erro ao mudar para popup: {str(e)}")
-                ja_processados.add(id_chamado)
+                ja_processados.add(index)
                 salvar_progresso(total_pendentes)
                 if socketio_emit_callback:
                     socketio_emit_callback('progresso', {'atual': len(ja_processados), 'total': total_pendentes})
@@ -603,7 +604,7 @@ def iniciar_automacao(socketio_emit_callback=None, ja_processados=None):
                 emitir_log(traceback.format_exc())
 
             # Adiciona aos processados e salva progresso
-            ja_processados.add(id_chamado)
+            ja_processados.add(index)
             salvar_progresso(total_pendentes)
             if socketio_emit_callback:
                 socketio_emit_callback('progresso', {'atual': len(ja_processados), 'total': total_pendentes})
