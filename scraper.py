@@ -408,8 +408,24 @@ class CASDMScraper:
             except Exception:
                 continue
 
-        # Log diagnóstico do status lido (sempre visível para diagnóstico)
-        self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [DIAG] Status CA SDM lido: '{status_real_ca}' | Em STATUS_RESOLVIDOS: {status_real_ca.upper() in STATUS_RESOLVIDOS}")
+        # Log diagnóstico do status lido
+        self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [DIAG] Status CA SDM: '{status_real_ca}' | Reconhecido: {status_real_ca.upper() in STATUS_RESOLVIDOS}")
+
+        # Se o status é reconhecido como resolvido, lista TODOS os campos pdmqa disponíveis
+        # Isso permite identificar o nome correto do campo de data sem inspecionar o HTML manualmente
+        if status_real_ca.upper() in STATUS_RESOLVIDOS:
+            try:
+                todos_pdmqa = driver.find_elements(By.XPATH, "//*[@pdmqa]")
+                campos_encontrados = []
+                for el in todos_pdmqa:
+                    attr = el.get_attribute("pdmqa")
+                    texto = el.text.strip()
+                    if attr and ("date" in attr.lower() or "dt" in attr.lower() or texto):
+                        campos_encontrados.append(f"{attr}='{texto}'")
+                if campos_encontrados:
+                    self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [DIAG] Campos pdmqa disponiveis: {' | '.join(campos_encontrados)}")
+            except Exception as e_diag:
+                self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [DIAG] Falha ao listar pdmqa: {str(e_diag)[:80]}")
 
         # -- Coluna G: Data Resolucao -----------
         # Só busca se o status do CA SDM indica resolvido E se a coluna G ainda não foi preenchida
