@@ -873,3 +873,22 @@ h1, h2, h3 {
 .error-card-img:hover {
     transform: scale(1.015);
 }
+
+/* Clickable elements for unknown groups */
+.badge-grupo-click, .log-line-grupo-link {
+    cursor: pointer;
+    background-color: rgba(245, 158, 11, 0.15);
+    color: var(--log-aviso);
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    font-weight: bold;
+    display: inline-block;
+    transition: all 0.2s ease;
+    text-decoration: none;
+}
+.badge-grupo-click:hover, .log-line-grupo-link:hover {
+    background-color: var(--log-aviso);
+    color: white;
+    transform: translateY(-1px);
+}

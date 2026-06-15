@@ -435,13 +435,12 @@ class CASDMScraper:
 
 
 class AutomationOrchestrator:
-    """Orquestrador principal que gerencia as threads, estatísticas, banco de dados e webhook."""
-    def __init__(self, socketio_emit_callback, ja_processados, headless, num_threads, webhook_url, timeout_busca, timeout_pagina):
+    """Orquestrador principal que gerencia as threads, estatísticas e banco de dados."""
+    def __init__(self, socketio_emit_callback, ja_processados, headless, num_threads, timeout_busca, timeout_pagina):
         self.socketio_emit_callback = socketio_emit_callback
         self.ja_processados = ja_processados or set()
         self.headless = headless
         self.num_threads = num_threads
-        self.webhook_url = webhook_url
         self.timeout_busca = timeout_busca
         self.timeout_pagina = timeout_pagina
         
@@ -493,35 +492,6 @@ class AutomationOrchestrator:
                 }, f, ensure_ascii=False, indent=4)
         except Exception as e:
             self.log(f"[ERRO] Falha ao salvar progresso temporario: {str(e)}")
-
-    def enviar_webhook(self, tempo_total):
-        if not self.webhook_url:
-            return
-        payload = {
-            "status": "cancelado" if _automacao_cancelada else ("sucesso" if self.stats['erros'] == 0 else "concluido_com_erros"),
-            "data_inicio": self.data_inicio_str,
-            "tempo_total": round(tempo_total, 2),
-            "total_chamados": self.total_pendentes,
-            "sucessos": self.stats['sucessos'],
-            "avisos": self.stats['avisos'],
-            "erros": self.stats['erros'],
-            "col_d_atualizadas": self.stats['col_d'],
-            "col_e_atualizadas": self.stats['col_e'],
-            "col_g_atualizadas": self.stats['col_g'],
-            "grupos_desconhecidos": list(self.grupos_nao_mapeados)
-        }
-        try:
-            self.log(f"[WEBHOOK] Enviando payload para {self.webhook_url}...")
-            data = json.dumps(payload).encode('utf-8')
-            req = urllib.request.Request(
-                self.webhook_url,
-                data=data,
-                headers={'Content-Type': 'application/json'}
-            )
-            with urllib.request.urlopen(req, timeout=10) as response:
-                self.log(f"[OK] Webhook disparado. Status retorno: {response.status}")
-        except Exception as e:
-            self.log(f"[AVISO] Falha ao enviar Webhook: {str(e)}")
 
     def worker_thread(self, thread_id, chunk_indices, dados, sheets_service, ca_email, ca_password):
         # Inicializa sessão do CA SDM
@@ -912,9 +882,6 @@ class AutomationOrchestrator:
             self.log(f"  Col. G (Resolucao)  : {self.stats['col_g']} preenchimento(s)")
             self.log(f"{'='*55}")
 
-            # Envia Webhook se configurado
-            self.enviar_webhook(duration)
-
             # Limpa progresso salvo ao concluir tudo com sucesso (ou cancelamento explícito)
             if not _automacao_pausada and os.path.exists('progresso.json'):
                 try:
@@ -940,13 +907,12 @@ class AutomationOrchestrator:
                 )
 
 
-def iniciar_automacao(socketio_emit_callback=None, ja_processados=None, headless=True, num_threads=1, webhook_url=None, timeout_busca=8, timeout_pagina=15):
+def iniciar_automacao(socketio_emit_callback=None, ja_processados=None, headless=True, num_threads=1, timeout_busca=8, timeout_pagina=15):
     orchestrator = AutomationOrchestrator(
         socketio_emit_callback=socketio_emit_callback,
         ja_processados=ja_processados,
         headless=headless,
         num_threads=num_threads,
-        webhook_url=webhook_url,
         timeout_busca=timeout_busca,
         timeout_pagina=timeout_pagina
     )

@@ -60,13 +60,8 @@
                             ⚠️ <strong>Aviso:</strong> Usar múltiplos navegadores exige cookies isolados por sessão para evitar interferência.
                         </div>
 
-                        <!-- Configurações: URL de Webhook e Timeouts -->
+                        <!-- Configurações de Timeouts -->
                         <div class="config-group-inputs">
-                            <div class="input-row">
-                                <label for="webhook-url">URL do Webhook (JSON POST):</label>
-                                <input type="url" id="webhook-url" class="config-input" placeholder="https://api.site.com/webhook">
-                            </div>
-                            
                             <div class="input-grid-2">
                                 <div class="input-row">
                                     <label for="timeout-busca">Busca Ticket (s):</label>
@@ -133,6 +128,14 @@
                         <input type="text" id="map-torre" placeholder="Letra (Ex: A)" required>
                         <button type="submit" class="btn-add-map">➕</button>
                     </form>
+
+                    <!-- Grupos Não Mapeados Identificados nesta execução -->
+                    <div id="grupos-desconhecidos-container" style="margin-top: 20px; display: none;">
+                        <h3 style="font-size: 0.85rem; margin-top: 0; margin-bottom: 8px; color: var(--log-aviso); display: flex; align-items: center; gap: 5px;">⚠️ Grupos Não Mapeados:</h3>
+                        <div id="grupos-desconhecidos-lista" style="display: flex; flex-wrap: wrap; gap: 8px;">
+                            <!-- Badges interativas serão inseridas aqui via JavaScript -->
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Card de Origem de Dados -->

@@ -19,9 +19,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const themeToggle       = document.getElementById('theme-toggle');
     const wsStatusDot       = document.getElementById('ws-status-dot');
     const wsStatusText      = document.getElementById('ws-status-text');
-    const inputWebhook      = document.getElementById('webhook-url');
     const inputTimeoutBusca = document.getElementById('timeout-busca');
     const inputTimeoutPagina = document.getElementById('timeout-pagina');
+
+    // Grupos Não Mapeados Identificados
+    const gruposDesconhecidosContainer = document.getElementById('grupos-desconhecidos-container');
+    const gruposDesconhecidosLista     = document.getElementById('grupos-desconhecidos-lista');
+    const gruposNaoMapeadosSet = new Set();
     
     // Novos Botões de Fluxo (Pausar / Parar)
     const btnPausar        = document.getElementById('btn-pausar');
@@ -91,9 +95,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ─── 2. Persistência de Configurações no LocalStorage ────────────────
     const carregarConfiguracoes = () => {
-        if (localStorage.getItem('webhook_url') !== null) {
-            inputWebhook.value = localStorage.getItem('webhook_url');
-        }
         if (localStorage.getItem('timeout_busca') !== null) {
             inputTimeoutBusca.value = localStorage.getItem('timeout_busca');
         }
@@ -110,7 +111,6 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const salvarConfiguracoes = () => {
-        localStorage.setItem('webhook_url', inputWebhook.value);
         localStorage.setItem('timeout_busca', inputTimeoutBusca.value);
         localStorage.setItem('timeout_pagina', inputTimeoutPagina.value);
         localStorage.setItem('headless', chkHeadless.checked);
@@ -130,7 +130,6 @@ document.addEventListener('DOMContentLoaded', () => {
         salvarConfiguracoes();
     });
     chkHeadless.addEventListener('change', salvarConfiguracoes);
-    inputWebhook.addEventListener('input', salvarConfiguracoes);
     inputTimeoutBusca.addEventListener('input', salvarConfiguracoes);
     inputTimeoutPagina.addEventListener('input', salvarConfiguracoes);
 
@@ -272,7 +271,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             col_d: exec.col_d,
                             col_e: exec.col_e,
                             col_g: exec.col_g
-                        });
+                        }, exec.grupos_desconhecidos);
                     });
                     
                     historicoTabelaCorpo.appendChild(tr);
@@ -286,13 +285,45 @@ document.addEventListener('DOMContentLoaded', () => {
             .catch(err => console.error("Erro ao ler historico:", err));
     };
 
-    const exibirMetricasNoDashboard = (m) => {
+    function adicionarGrupoDesconhecidoBadge(grupo) {
+        if (!grupo) return;
+        if (gruposDesconhecidosLista.querySelector(`[data-grupo="${grupo}"]`)) return;
+        
+        const badge = document.createElement('span');
+        badge.className = 'badge-grupo-click';
+        badge.setAttribute('data-grupo', grupo);
+        badge.textContent = grupo;
+        badge.title = 'Clique para mapear este grupo';
+        
+        badge.addEventListener('click', () => {
+            mapGrupoInput.value = grupo;
+            mapTorreInput.focus();
+        });
+        
+        gruposDesconhecidosLista.appendChild(badge);
+    }
+    
+    function resetarGruposDesconhecidos() {
+        gruposNaoMapeadosSet.clear();
+        gruposDesconhecidosLista.innerHTML = '';
+        gruposDesconhecidosContainer.style.display = 'none';
+    }
+
+    const exibirMetricasNoDashboard = (m, gruposDesconhecidos) => {
         metricTotal.textContent = m.total;
         metricSucesso.textContent = m.sucessos;
         metricAviso.textContent = m.avisos;
         metricErro.textContent = m.erros;
         metricTempo.textContent = m.tempo;
         metricUpdates.innerHTML = `Colunas atualizadas: <span>D: ${m.col_d}</span> • <span>E: ${m.col_e}</span> • <span>G: ${m.col_g}</span>`;
+        
+        gruposDesconhecidosLista.innerHTML = '';
+        if (gruposDesconhecidos && gruposDesconhecidos.length > 0) {
+            gruposDesconhecidos.forEach(g => adicionarGrupoDesconhecidoBadge(g));
+            gruposDesconhecidosContainer.style.display = 'block';
+        } else {
+            gruposDesconhecidosContainer.style.display = 'none';
+        }
     };
 
     carregarHistorico();
@@ -463,11 +494,60 @@ document.addEventListener('DOMContentLoaded', () => {
         return 'log-default';
     }
 
+    function escapeHtml(text) {
+        return text
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+
+    function obterEmojiSemantico(texto) {
+        const t = texto.toLowerCase();
+        if (t.includes('[ok]')) return '✅ ';
+        if (t.includes('[erro') || t.includes('erro:')) return '❌ ';
+        if (t.includes('[aviso]') || t.includes('[nao localizado]') || t.includes('[timeout]')) return '⚠️ ';
+        if (t.includes('[sheets]') || t.includes('[login]') || t.includes('autenticacao') || t.includes('cookies')) return '🔌 ';
+        if (t.includes('[inicio]') || t.includes('iniciando') || t.includes('varredura')) return '🚀 ';
+        if (t.includes('[fim]') || t.includes('concluido') || t.includes('concluida') || t.includes('finalizando')) return '🏁 ';
+        if (t.includes('pausado') || t.includes('cancelada') || t.includes('retomado') || t.startsWith('===') || t.startsWith('---')) return '⚙️ ';
+        return '⚙️ ';
+    }
+
     function adicionarLog(texto, classeExtra) {
         const div = document.createElement('div');
         div.className = 'log-line ' + (classeExtra || classificarLog(texto));
-        div.textContent = '> ' + texto;
+        
+        const emoji = obterEmojiSemantico(texto);
+        const match = texto.match(/Grupo \'(.+?)\' nao mapeado/i);
+        
+        let htmlContent = escapeHtml(texto);
+        if (match) {
+            const grupoName = match[1];
+            gruposNaoMapeadosSet.add(grupoName);
+            adicionarGrupoDesconhecidoBadge(grupoName);
+            gruposDesconhecidosContainer.style.display = 'block';
+            
+            const escapedGrupo = escapeHtml(grupoName);
+            const linkHtml = `'<span class="log-line-grupo-link" title="Clique para mapear este grupo">${escapedGrupo}</span>'`;
+            htmlContent = htmlContent.replace(`&#039;${escapedGrupo}&#039;`, linkHtml);
+        }
+        
+        div.innerHTML = `> ${emoji}${htmlContent}`;
         consoleLogs.appendChild(div);
+        
+        // Add click listener to the group link in log console
+        const linkElem = div.querySelector('.log-line-grupo-link');
+        if (linkElem) {
+            linkElem.style.textDecoration = 'underline';
+            linkElem.style.cursor = 'pointer';
+            linkElem.addEventListener('click', () => {
+                const grupo = linkElem.textContent;
+                mapGrupoInput.value = grupo;
+                mapTorreInput.focus();
+            });
+        }
         
         const textMatches = currentLogSearch === '' || div.textContent.toLowerCase().includes(currentLogSearch);
         let classMatches = true;
@@ -535,10 +615,10 @@ document.addEventListener('DOMContentLoaded', () => {
         progressPercent.textContent = '0%';
         consoleLogs.innerHTML = '<div class="log-line log-sistema">> Enviando solicitacao ao servidor...</div>';
         
+        resetarGruposDesconhecidos();
         socket.emit('iniciar_conferencia', {
             headless: chkHeadless.checked,
             num_threads: parseInt(selectThreads.value),
-            webhook_url: inputWebhook.value,
             timeout_busca: parseInt(inputTimeoutBusca.value),
             timeout_pagina: parseInt(inputTimeoutPagina.value)
         });
@@ -549,11 +629,11 @@ document.addEventListener('DOMContentLoaded', () => {
         setBotoes(true);
         progressContainer.style.display = 'block';
         consoleLogs.innerHTML = '<div class="log-line log-sistema">> Retomando execucao anterior...</div>';
+        resetarGruposDesconhecidos();
         
         socket.emit('continuar_conferencia', {
             headless: chkHeadless.checked,
             num_threads: parseInt(selectThreads.value),
-            webhook_url: inputWebhook.value,
             timeout_busca: parseInt(inputTimeoutBusca.value),
             timeout_pagina: parseInt(inputTimeoutPagina.value)
         });
@@ -593,6 +673,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // ─── 16. Botão: Exportar Logs ────────────────────────────────────────
     btnExportar.addEventListener('click', () => {
         const lines = Array.from(consoleLogs.querySelectorAll('.log-line'))
+            .filter(div => div.style.display !== 'none')
             .map(div => div.textContent.replace(/^>\s*/, ''))
             .join('\r\n');
         

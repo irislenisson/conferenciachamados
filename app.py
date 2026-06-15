@@ -103,7 +103,7 @@ def api_get_erros_execucao(exec_id):
 
 # ─── Execução e Controles do Scraper ─────────────────────────────────────
 
-def _roda_thread(ja_processados, headless, num_threads, webhook_url, timeout_busca, timeout_pagina):
+def _roda_thread(ja_processados, headless, num_threads, timeout_busca, timeout_pagina):
     """Função executada na thread de automação. Garante liberação da flag ao final."""
     global _automacao_em_andamento
     try:
@@ -112,7 +112,6 @@ def _roda_thread(ja_processados, headless, num_threads, webhook_url, timeout_bus
             ja_processados=ja_processados,
             headless=headless,
             num_threads=num_threads,
-            webhook_url=webhook_url,
             timeout_busca=timeout_busca,
             timeout_pagina=timeout_pagina
         )
@@ -136,14 +135,13 @@ def handle_iniciar(data=None):
     data = data or {}
     headless = data.get('headless', True)
     num_threads = int(data.get('num_threads', 1))
-    webhook_url = data.get('webhook_url', '').strip() or None
     timeout_busca = int(data.get('timeout_busca', 8))
     timeout_pagina = int(data.get('timeout_pagina', 15))
     
     socketio.emit('log_message', {'data': f'[INICIO] Iniciando nova varredura do zero (Modo Invisivel={headless}, Navegadores={num_threads})...'})
     threading.Thread(
         target=_roda_thread, 
-        args=(set(), headless, num_threads, webhook_url, timeout_busca, timeout_pagina), 
+        args=(set(), headless, num_threads, timeout_busca, timeout_pagina), 
         daemon=True
     ).start()
 
@@ -164,14 +162,13 @@ def handle_continuar(data=None):
     data = data or {}
     headless = data.get('headless', True)
     num_threads = int(data.get('num_threads', 1))
-    webhook_url = data.get('webhook_url', '').strip() or None
     timeout_busca = int(data.get('timeout_busca', 8))
     timeout_pagina = int(data.get('timeout_pagina', 15))
     
     socketio.emit('log_message', {'data': f'[INICIO] Continuando varredura ({n} chamado(s) ja processados, Modo Invisivel={headless}, Navegadores={num_threads})...'})
     threading.Thread(
         target=_roda_thread, 
-        args=(ja_processados, headless, num_threads, webhook_url, timeout_busca, timeout_pagina), 
+        args=(ja_processados, headless, num_threads, timeout_busca, timeout_pagina), 
         daemon=True
     ).start()
 
