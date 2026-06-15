@@ -136,6 +136,13 @@ class CASDMSession:
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-dev-shm-usage")
         
+        # Desabilitar imagens e notificações para economizar banda, CPU e acelerar renderização
+        chrome_prefs = {
+            "profile.managed_default_content_settings.images": 2,
+            "profile.default_content_setting_values.notifications": 2
+        }
+        options.add_experimental_option("prefs", chrome_prefs)
+        
         self.driver = webdriver.Chrome(options=options)
         self.wait = WebDriverWait(self.driver, 10)
 
@@ -280,7 +287,8 @@ class CASDMScraper:
         chamado_carregado = False
         chamado_nao_encontrado = False
 
-        limite_loops = int(timeout_pagina * 2)
+        # Otimizado: polling de 0.2s em vez de 0.5s para carregamentos mais rápidos
+        limite_loops = int(timeout_pagina * 5)
         for _ in range(limite_loops):
             try:
                 self.session.fechar_alertas("aguardando cai_main")
@@ -320,7 +328,7 @@ class CASDMScraper:
                 self.session.fechar_alertas("cai_main loop")
             except Exception:
                 pass
-            time.sleep(0.5)
+            time.sleep(0.2)
 
         if chamado_nao_encontrado:
             self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [NAO LOCALIZADO] Chamado {id_chamado} nao localizado.")
@@ -439,11 +447,15 @@ class AutomationOrchestrator:
         self.sheet_lock = threading.Lock()
         self.progress_lock = threading.Lock()
         self.stats_lock = threading.Lock()
+        self.buffer_lock = threading.Lock()
         
         self.grupos_nao_mapeados = set()
         self.duplicados = {}
         self.total_pendentes = 0
         self.mapeamentos_cache = []
+        
+        # Otimizado: Buffer para atualização em lote no Google Sheets
+        self.cells_to_write_buffer = []
         
         # Estatísticas de execução
         self.stats = {
@@ -523,7 +535,7 @@ class AutomationOrchestrator:
             return
 
         for idx in chunk_indices:
-            # ─── Verificações de Controle de Fluxo (Pausar / Cancelar) ─────────
+            # ─── Verificações de Controle de Fluxo ────────────────────────────
             if _automacao_cancelada:
                 self.log(f"[Navegador {thread_id}] Execucao cancelada. Parando thread...")
                 break
@@ -574,7 +586,7 @@ class AutomationOrchestrator:
                         self.socketio_emit_callback('progresso', {'atual': len(self.ja_processados), 'total': self.total_pendentes})
                 continue
 
-            # --- PROCESSAMENTO DO CHAMADO COM TRATAMENTO E AUTO-RECUPERAÇÃO ---
+            # --- PROCESSAMENTO DO CHAMADO ---
             tentativa_processo = 0
             processamento_completo = False
 
@@ -589,7 +601,7 @@ class AutomationOrchestrator:
                         session.fechar_driver()
                         session.inicializar_driver()
 
-                    # Garante janela principal ativa e fecha popups residuais
+                    # Garante janela principal ativa
                     try:
                         for handle in list(session.driver.window_handles):
                             if handle != session.main_window_handle:
@@ -611,8 +623,8 @@ class AutomationOrchestrator:
                             self.stats['plano_a'] += 1
                         self.log(f"[Navegador {thread_id}] [PLANO A] OK - Popup detectado.")
                     else:
-                        # PLANO B: Forçar login e re-tentar busca
-                        self.log(f"[Navegador {thread_id}] [PLANO B] Recriando sessao e re-tentando busca...")
+                        # PLANO B
+                        self.log(f"[Navegador {thread_id}] [PLANO B] Recriando sessao...")
                         session.fechar_driver()
                         session.inicializar_driver()
                         session.fechar_alertas("plano B pré-busca")
@@ -629,7 +641,6 @@ class AutomationOrchestrator:
                         with self.stats_lock:
                             self.stats['avisos'] += 1
                         
-                        # Captura print base64 de erro para auditoria
                         scr_b64 = ""
                         try: scr_b64 = session.driver.get_screenshot_as_base64()
                         except Exception: pass
@@ -665,7 +676,6 @@ class AutomationOrchestrator:
                         grupo_raw = resultado.get('grupo_raw')
 
                         if grupo_raw and not val_d:
-                            # Registra grupo desconhecido no SQLite
                             database.registrar_grupo_desconhecido(self.exec_id, grupo_raw)
 
                         if val_d:
@@ -674,7 +684,7 @@ class AutomationOrchestrator:
                                 with self.stats_lock:
                                     self.stats['col_d'] += 1
                                     self.stats['sucessos'] += 1
-                                self.log(f"[Navegador {thread_id}] Linha {idx}: [OK] Coluna D atualizada -> '{val_d}'")
+                                self.log(f"[Navegador {thread_id}] Linha {idx}: [OK] Coluna D identificada -> '{val_d}'")
                             else:
                                 self.log(f"[Navegador {thread_id}] Linha {idx}: Coluna D ja esta correta ('{data_torre_atual}').")
 
@@ -684,19 +694,38 @@ class AutomationOrchestrator:
                                 with self.stats_lock:
                                     self.stats['col_e'] += 1
                                     self.stats['sucessos'] += 1
-                                self.log(f"[Navegador {thread_id}] Linha {idx}: [OK] Coluna E preenchida -> {val_e}")
+                                self.log(f"[Navegador {thread_id}] Linha {idx}: [OK] Coluna E identificada -> {val_e}")
 
                         if val_g:
                             cells_to_update.append(Cell(row=idx, col=7, value=val_g))
                             with self.stats_lock:
                                 self.stats['col_g'] += 1
                                 self.stats['sucessos'] += 1
-                            self.log(f"[Navegador {thread_id}] Linha {idx}: [OK] Coluna G preenchida -> {val_g}")
+                            self.log(f"[Navegador {thread_id}] Linha {idx}: [OK] Coluna G identificada -> {val_g}")
 
                         if cells_to_update:
-                            # Gravação no sheets com retentativas/backoff
-                            sheets_service.atualizar_celulas(cells_to_update)
-                            self.log(f"[Navegador {thread_id}] Linha {idx}: [OK] Google Sheets sincronizado.")
+                            # Otimizado: Bufferiza as gravações em vez de chamar HTTP sincronamente agora
+                            with self.buffer_lock:
+                                self.cells_to_write_buffer.extend(cells_to_update)
+                                buffer_size = len(self.cells_to_write_buffer)
+                            
+                            self.log(f"[Navegador {thread_id}] Linha {idx}: [OK] Alteracoes adicionadas ao buffer.")
+                            
+                            # Para segurança (proteção de memória e quedas repentinas), se o buffer passar de 15 células, descarrega parcial
+                            if buffer_size >= 15:
+                                self.log(f"[Navegador {thread_id}] [SHEETS] Buffer cheio ({buffer_size} celulas). Gravando parcial...")
+                                try:
+                                    with self.buffer_lock:
+                                        cells_to_write = list(self.cells_to_write_buffer)
+                                        self.cells_to_write_buffer.clear()
+                                    if cells_to_write:
+                                        sheets_service.atualizar_celulas(cells_to_write)
+                                        self.log(f"[Navegador {thread_id}] [OK] Gravacao parcial concluida.")
+                                except Exception as e_partial:
+                                    self.log(f"[Navegador {thread_id}] [ERRO] Falha ao gravar parcial: {str(e_partial)}")
+                                    # Devolve ao buffer em caso de erro para tentar novamente mais tarde
+                                    with self.buffer_lock:
+                                        self.cells_to_write_buffer.extend(cells_to_write)
                         else:
                             with self.stats_lock:
                                 self.stats['sucessos'] += 1
@@ -705,7 +734,7 @@ class AutomationOrchestrator:
                         with self.stats_lock:
                             self.stats['avisos'] += 1
 
-                    # Fecha o popup e retorna à janela principal
+                    # Fecha o popup
                     try:
                         session.driver.close()
                         session.driver.switch_to.window(session.main_window_handle)
@@ -717,7 +746,6 @@ class AutomationOrchestrator:
                 except (WebDriverException, NoSuchWindowException) as e_drv:
                     self.log(f"[Navegador {thread_id}] [AVISO] Falha de WebDriver na tentativa {tentativa_processo}: {str(e_drv)[:80]}")
                     
-                    # Salva print e log do erro em erros_detalhes
                     scr_b64 = ""
                     try: scr_b64 = session.driver.get_screenshot_as_base64()
                     except Exception: pass
@@ -734,7 +762,6 @@ class AutomationOrchestrator:
                 except Exception as e_gen:
                     self.log(f"[Navegador {thread_id}] [ERRO] Falha geral no chamado {id_chamado}: {str(e_gen)}")
                     
-                    # Salva print e log do erro em erros_detalhes
                     scr_b64 = ""
                     try: scr_b64 = session.driver.get_screenshot_as_base64()
                     except Exception: pass
@@ -830,6 +857,17 @@ class AutomationOrchestrator:
 
             for t in threads:
                 t.join()
+
+            # Otimizado: Gravação final de todas as células restantes no buffer (em Lote)
+            if self.cells_to_write_buffer:
+                self.log(f"\n[SHEETS] Sincronizando {len(self.cells_to_write_buffer)} alteracoes finais em Lote no Google Sheets...")
+                try:
+                    sheets_service.atualizar_celulas(self.cells_to_write_buffer)
+                    self.log("[OK] Sincronizacao em lote concluida com sucesso!")
+                except Exception as e_batch:
+                    self.log(f"[ERRO CRITICO] Falha ao gravar lote final: {str(e_batch)}")
+            else:
+                self.log("\n[SHEETS] Nenhuma gravacao de celula pendente.")
 
             # Conclusão e Relatório Final
             duration = time.time() - start_time
