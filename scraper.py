@@ -408,12 +408,11 @@ class CASDMScraper:
             except Exception:
                 continue
 
-        # Log diagnóstico do status lido
-        self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [DIAG] Status CA SDM: '{status_real_ca}' | Reconhecido: {status_real_ca.upper() in STATUS_RESOLVIDOS}")
-
-        # Se o status é reconhecido como resolvido, lista TODOS os campos pdmqa disponíveis
-        # Isso permite identificar o nome correto do campo de data sem inspecionar o HTML manualmente
+        # Log do status somente quando for relevante (resolvido ou vazio)
         if status_real_ca.upper() in STATUS_RESOLVIDOS:
+            self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [DIAG] Status CA SDM: '{status_real_ca}' — buscando data de resolucao...")
+
+            # Lista TODOS os campos pdmqa disponíveis para identificar o campo de data correto
             try:
                 todos_pdmqa = driver.find_elements(By.XPATH, "//*[@pdmqa]")
                 campos_encontrados = []
@@ -423,7 +422,7 @@ class CASDMScraper:
                     if attr and ("date" in attr.lower() or "dt" in attr.lower() or texto):
                         campos_encontrados.append(f"{attr}='{texto}'")
                 if campos_encontrados:
-                    self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [DIAG] Campos pdmqa disponiveis: {' | '.join(campos_encontrados)}")
+                    self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [DIAG] Campos pdmqa: {' | '.join(campos_encontrados)}")
             except Exception as e_diag:
                 self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [DIAG] Falha ao listar pdmqa: {str(e_diag)[:80]}")
 
@@ -431,8 +430,6 @@ class CASDMScraper:
         # Só busca se o status do CA SDM indica resolvido E se a coluna G ainda não foi preenchida
         if status_real_ca.upper() in STATUS_RESOLVIDOS and not data_resolucao_atual:
             campo_data_hora = ""
-            # Tenta múltiplos campos de data — resolve_date, close_date e last_mod_dt
-            # (chamados "Corrigido" podem usar campo diferente de chamados "Resolvido")
             SELETORES_DATA_RESOLUCAO = [
                 (By.XPATH, "//*[@pdmqa='resolve_date']"),
                 (By.ID,    "df_8_2"),
@@ -446,11 +443,11 @@ class CASDMScraper:
                 try:
                     el = driver.find_element(*seletor)
                     txt = el.text.strip()
-                    self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [DIAG] Seletor {seletor} => '{txt}'")
                     if txt and not campo_data_hora:
                         campo_data_hora = txt
+                        self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [DIAG] Data encontrada via {seletor}: '{txt}'")
                 except Exception:
-                    self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [DIAG] Seletor {seletor} => nao encontrado")
+                    continue
 
             if campo_data_hora:
                 try:
@@ -460,9 +457,7 @@ class CASDMScraper:
                 except Exception as e:
                     self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [ERRO] Formatacao resolucao '{campo_data_hora}': {str(e)}")
             else:
-                self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [AVISO] Status '{status_real_ca}' resolvido mas NENHUM campo de data encontrado no popup. Verifique os seletores.")
-        elif status_real_ca and status_real_ca.upper() not in STATUS_RESOLVIDOS:
-            self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [DIAG] Status '{status_real_ca}' nao esta em STATUS_RESOLVIDOS — coluna G nao sera preenchida.")
+                self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [AVISO] Status '{status_real_ca}' reconhecido mas NENHUM campo de data encontrado. Veja os campos pdmqa acima.")
 
         return valores_retornados
 
