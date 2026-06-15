@@ -32,6 +32,7 @@ STATUS_RESOLVIDOS = {
     "RESOLVIDO", "RESOLVIDA",
     "CONCLUÍDO", "CONCLUÍDA",
     "ENCERRADO", "ENCERRADA",
+    "CORRIGIDO", "CORRIGIDA"
 }
 
 # ─── Flags globais para Controle de Fluxo (Pausar / Cancelar) ─────────────────
@@ -284,7 +285,7 @@ class CASDMScraper:
                 return mapping['torre']
         return ""
 
-    def extrair_dados_popup(self, id_chamado, index, data_torre_atual, data_envio_atual, grupos_nao_mapeados, timeout_pagina=15):
+    def extrair_dados_popup(self, id_chamado, index, data_torre_atual, data_envio_atual, grupos_nao_mapeados, data_resolucao_atual="", timeout_pagina=15):
         driver = self.session.driver
         chamado_carregado = False
         chamado_nao_encontrado = False
@@ -408,7 +409,8 @@ class CASDMScraper:
                 continue
 
         # -- Coluna G: Data Resolucao -----------
-        if status_real_ca.upper() in STATUS_RESOLVIDOS:
+        # Só busca se o status do CA SDM indica resolvido E se a coluna G ainda não foi preenchida
+        if status_real_ca.upper() in STATUS_RESOLVIDOS and not data_resolucao_atual:
             campo_data_hora = ""
             for seletor in [
                 (By.XPATH, "//*[@pdmqa='resolve_date']"), (By.ID, "df_8_2"),
@@ -528,10 +530,11 @@ class AutomationOrchestrator:
                     continue
 
             linha = dados[idx - 1]
-            id_chamado       = linha[1].strip()
-            status_h         = linha[7].strip()
-            data_torre_atual = linha[3].strip() if len(linha) > 3 else ""
-            data_envio_atual = linha[4].strip() if len(linha) > 4 else ""
+            id_chamado            = linha[1].strip()
+            status_h              = linha[7].strip()
+            data_torre_atual      = linha[3].strip() if len(linha) > 3 else ""
+            data_envio_atual      = linha[4].strip() if len(linha) > 4 else ""
+            data_resolucao_atual  = linha[6].strip() if len(linha) > 6 else ""
 
             if id_chamado in self.duplicados:
                 outras_linhas = [l for l in self.duplicados[id_chamado] if l != idx]
@@ -645,8 +648,10 @@ class AutomationOrchestrator:
 
                     # Extrai dados do popup
                     resultado = scraper.extrair_dados_popup(
-                        id_chamado, idx, data_torre_atual, data_envio_atual, 
-                        self.grupos_nao_mapeados, timeout_pagina=self.timeout_pagina
+                        id_chamado, idx, data_torre_atual, data_envio_atual,
+                        self.grupos_nao_mapeados,
+                        data_resolucao_atual=data_resolucao_atual,
+                        timeout_pagina=self.timeout_pagina
                     )
 
                     if resultado:
