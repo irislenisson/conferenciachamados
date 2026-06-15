@@ -408,44 +408,24 @@ class CASDMScraper:
             except Exception:
                 continue
 
-        # Log do status somente quando for relevante (resolvido ou vazio)
-        if status_real_ca.upper() in STATUS_RESOLVIDOS:
-            self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [DIAG] Status CA SDM: '{status_real_ca}' — buscando data de resolucao...")
-
-            # Lista TODOS os campos pdmqa disponíveis para identificar o campo de data correto
-            try:
-                todos_pdmqa = driver.find_elements(By.XPATH, "//*[@pdmqa]")
-                campos_encontrados = []
-                for el in todos_pdmqa:
-                    attr = el.get_attribute("pdmqa")
-                    texto = el.text.strip()
-                    if attr and ("date" in attr.lower() or "dt" in attr.lower() or texto):
-                        campos_encontrados.append(f"{attr}='{texto}'")
-                if campos_encontrados:
-                    self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [DIAG] Campos pdmqa: {' | '.join(campos_encontrados)}")
-            except Exception as e_diag:
-                self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [DIAG] Falha ao listar pdmqa: {str(e_diag)[:80]}")
-
         # -- Coluna G: Data Resolucao -----------
-        # Só busca se o status do CA SDM indica resolvido E se a coluna G ainda não foi preenchida
+        # Busca a data apenas quando o status indica que o chamado foi resolvido/encerrado
+        # e a coluna G ainda não foi preenchida na planilha
         if status_real_ca.upper() in STATUS_RESOLVIDOS and not data_resolucao_atual:
             campo_data_hora = ""
-            SELETORES_DATA_RESOLUCAO = [
+            for seletor in [
                 (By.XPATH, "//*[@pdmqa='resolve_date']"),
                 (By.ID,    "df_8_2"),
                 (By.XPATH, "//*[@pdmqa='close_date']"),
                 (By.ID,    "df_8_3"),
                 (By.XPATH, "//*[@pdmqa='last_mod_dt']"),
-                (By.XPATH, "//*[@pdmqa='resolved_date']"),
-                (By.XPATH, "//*[@pdmqa='fix_date']"),
-            ]
-            for seletor in SELETORES_DATA_RESOLUCAO:
+            ]:
                 try:
                     el = driver.find_element(*seletor)
                     txt = el.text.strip()
-                    if txt and not campo_data_hora:
+                    if txt:
                         campo_data_hora = txt
-                        self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [DIAG] Data encontrada via {seletor}: '{txt}'")
+                        break
                 except Exception:
                     continue
 
@@ -455,9 +435,9 @@ class CASDMScraper:
                     data_obj = datetime.strptime(data_pura, "%d/%m/%Y")
                     valores_retornados['col_g_val'] = data_obj.strftime("%d/%m/%Y")
                 except Exception as e:
-                    self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [ERRO] Formatacao resolucao '{campo_data_hora}': {str(e)}")
+                    self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [ERRO] Formatacao data resolucao '{campo_data_hora}': {str(e)}")
             else:
-                self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [AVISO] Status '{status_real_ca}' reconhecido mas NENHUM campo de data encontrado. Veja os campos pdmqa acima.")
+                self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [AVISO] Status '{status_real_ca}' reconhecido mas data de resolucao nao encontrada no popup.")
 
         return valores_retornados
 
