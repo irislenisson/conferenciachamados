@@ -414,14 +414,15 @@ def iniciar_automacao(socketio_emit_callback=None, ja_processados=None, headless
             driver = webdriver.Chrome(options=options)
             wait = WebDriverWait(driver, 10)
 
-            # Autenticação e Cookies
+            # Autenticação e Cookies isolados por thread
             cookies_restaurados = False
-            if os.path.exists('sessao_cookies.json'):
+            cookie_file = f'sessao_cookies_{thread_id}.json'
+            if os.path.exists(cookie_file):
                 try:
                     driver.get("http://vms-ca-sdm:8080/")
                     time.sleep(1)
                     with cookies_lock:
-                        with open('sessao_cookies.json', 'r', encoding='utf-8') as f:
+                        with open(cookie_file, 'r', encoding='utf-8') as f:
                             cookies = json.load(f)
                     for cookie in cookies:
                         try:
@@ -444,7 +445,7 @@ def iniciar_automacao(socketio_emit_callback=None, ja_processados=None, headless
                 fazer_login(driver, wait, ca_email, ca_password, thread_id)
                 try:
                     with cookies_lock:
-                        with open('sessao_cookies.json', 'w', encoding='utf-8') as f:
+                        with open(cookie_file, 'w', encoding='utf-8') as f:
                             json.dump(driver.get_cookies(), f)
                     emitir_log(f"[Navegador {thread_id}] [OK] Cookies de sessao salvos.")
                 except Exception as e_save:
