@@ -39,6 +39,7 @@ STATUS_RESOLVIDOS = {
 _automacao_pausada = False
 _automacao_cancelada = False
 _fluxo_lock = threading.Lock()
+_login_lock = threading.Lock()
 
 def pausar_automacao(estado: bool):
     global _automacao_pausada
@@ -174,15 +175,18 @@ class CASDMSession:
                 self.log_callback(f"[Navegador {self.thread_id}] [AVISO] Falha ao carregar cookies: {str(e)[:60]}")
 
         if not cookies_restaurados:
-            self.driver.get("http://vms-ca-sdm:8080/CAisd/pdmweb.exe")
-            self.fazer_login()
-            try:
-                with self.cookies_lock:
-                    with open(self.cookie_file, 'w', encoding='utf-8') as f:
-                        json.dump(self.driver.get_cookies(), f)
-                self.log_callback(f"[Navegador {self.thread_id}] [OK] Cookies de sessao salvos.")
-            except Exception as e:
-                self.log_callback(f"[Navegador {self.thread_id}] Falha ao salvar cookies: {str(e)}")
+            self.log_callback(f"[Navegador {self.thread_id}] Aguardando lock para login...")
+            with _login_lock:
+                self.log_callback(f"[Navegador {self.thread_id}] Realizando login no CA SDM...")
+                self.driver.get("http://vms-ca-sdm:8080/CAisd/pdmweb.exe")
+                self.fazer_login()
+                try:
+                    with self.cookies_lock:
+                        with open(self.cookie_file, 'w', encoding='utf-8') as f:
+                            json.dump(self.driver.get_cookies(), f)
+                    self.log_callback(f"[Navegador {self.thread_id}] [OK] Cookies de sessao salvos.")
+                except Exception as e:
+                    self.log_callback(f"[Navegador {self.thread_id}] Falha ao salvar cookies: {str(e)}")
 
         self.main_window_handle = self.driver.current_window_handle
         return self.driver
@@ -506,10 +510,10 @@ class AutomationOrchestrator:
         session = CASDMSession(ca_email, ca_password, thread_id, self.headless, self.log)
         scraper = CASDMScraper(session, self.log, self.mapeamentos_cache)
         
-        # Escalona a inicializacao para evitar que multiplos navegadores tentem fazer login simultaneamente
+        # Pequeno escalonamento apenas para aliviar o pico de CPU na abertura física dos navegadores
         if thread_id > 1:
-            delay = (thread_id - 1) * 2
-            self.log(f"[Navegador {thread_id}] Aguardando {delay}s para inicializacao escalonada...")
+            delay = (thread_id - 1) * 0.3
+            self.log(f"[Navegador {thread_id}] Aguardando {delay:.1f}s para inicializacao escalonada...")
             time.sleep(delay)
             
         try:
@@ -709,8 +713,8 @@ class AutomationOrchestrator:
                             
                             self.log(f"[Navegador {thread_id}] Linha {idx}: [OK] Alteracoes adicionadas ao buffer.")
                             
-                            # Para segurança (proteção de memória e quedas repentinas), se o buffer passar de 15 células, descarrega parcial
-                            if buffer_size >= 15:
+                            # Para segurança (proteção de memória e quedas repentinas), se o buffer passar de 25 células, descarrega parcial
+                            if buffer_size >= 25:
                                 self.log(f"[Navegador {thread_id}] [SHEETS] Buffer cheio ({buffer_size} celulas). Gravando parcial...")
                                 try:
                                     with self.buffer_lock:
