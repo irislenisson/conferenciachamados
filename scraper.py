@@ -505,7 +505,7 @@ class AutomationOrchestrator:
         except Exception as e:
             self.log(f"[ERRO] Falha ao salvar progresso temporario: {str(e)}")
 
-    def worker_thread(self, thread_id, chunk_indices, dados, sheets_service, ca_email, ca_password):
+    def worker_thread(self, thread_id, queue_indices, dados, sheets_service, ca_email, ca_password):
         # Inicializa sessão do CA SDM
         session = CASDMSession(ca_email, ca_password, thread_id, self.headless, self.log)
         scraper = CASDMScraper(session, self.log, self.mapeamentos_cache)
@@ -524,7 +524,7 @@ class AutomationOrchestrator:
                 self.stats['erros'] += 1
             return
 
-        for idx in chunk_indices:
+        while not queue_indices.empty():
             # ─── Verificações de Controle de Fluxo ────────────────────────────
             if _automacao_cancelada:
                 self.log(f"[Navegador {thread_id}] Execucao cancelada. Parando thread...")
@@ -538,6 +538,11 @@ class AutomationOrchestrator:
                 
             if _automacao_cancelada:
                 self.log(f"[Navegador {thread_id}] Execucao cancelada. Parando thread...")
+                break
+
+            try:
+                idx = queue_indices.get_nowait()
+            except Exception:
                 break
 
             # Dupla checagem para evitar concorrência redundante
@@ -840,19 +845,16 @@ class AutomationOrchestrator:
             if self.socketio_emit_callback:
                 self.socketio_emit_callback('progresso', {'atual': len(self.ja_processados), 'total': self.total_pendentes})
 
-            # Divisão dos índices entre os navegadores
-            chunks = [[] for _ in range(self.num_threads)]
-            for i, idx in enumerate(indices_para_processar):
-                chunks[i % self.num_threads].append(idx)
+            import queue
+            queue_indices = queue.Queue()
+            for idx in indices_para_processar:
+                queue_indices.put(idx)
 
             threads = []
             for t_id in range(1, self.num_threads + 1):
-                chunk = chunks[t_id - 1]
-                if not chunk:
-                    continue
                 t = threading.Thread(
                     target=self.worker_thread,
-                    args=(t_id, chunk, dados, sheets_service, ca_email, ca_password)
+                    args=(t_id, queue_indices, dados, sheets_service, ca_email, ca_password)
                 )
                 threads.append(t)
                 t.start()
