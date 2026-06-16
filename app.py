@@ -207,4 +207,4 @@ def handle_parar():
 database.inicializar_db()
 
 if __name__ == '__main__':
-    socketio.run(app, debug=True, port=5000, allow_unsafe_werkzeug=True)
+    socketio.run(app, debug=True, use_reloader=False, port=5000, allow_unsafe_werkzeug=True)

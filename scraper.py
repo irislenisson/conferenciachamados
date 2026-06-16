@@ -146,6 +146,8 @@ class CASDMSession:
         options.add_experimental_option("prefs", chrome_prefs)
         
         self.driver = webdriver.Chrome(options=options)
+        self.driver.set_page_load_timeout(25)
+        self.driver.set_script_timeout(25)
         self.wait = WebDriverWait(self.driver, 10)
 
         cookies_restaurados = False
