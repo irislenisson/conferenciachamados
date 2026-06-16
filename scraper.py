@@ -506,6 +506,12 @@ class AutomationOrchestrator:
         session = CASDMSession(ca_email, ca_password, thread_id, self.headless, self.log)
         scraper = CASDMScraper(session, self.log, self.mapeamentos_cache)
         
+        # Escalona a inicializacao para evitar que multiplos navegadores tentem fazer login simultaneamente
+        if thread_id > 1:
+            delay = (thread_id - 1) * 2
+            self.log(f"[Navegador {thread_id}] Aguardando {delay}s para inicializacao escalonada...")
+            time.sleep(delay)
+            
         try:
             session.inicializar_driver()
         except Exception as e:
