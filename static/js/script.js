@@ -14,6 +14,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const selectThreads     = document.getElementById('select-threads');
     const warningParallel   = document.getElementById('warning-parallel');
     const btnExportar       = document.getElementById('btn-exportar');
+    const btnRelatorio      = document.getElementById('btn-relatorio');
 
     // Novos Elementos de Configuração e Cabeçalho
     const themeToggle       = document.getElementById('theme-toggle');
@@ -93,28 +94,49 @@ document.addEventListener('DOMContentLoaded', () => {
         applyTheme(nextTheme);
     });
 
-    // ─── 2. Persistência de Configurações no LocalStorage ────────────────
+    // ─── 2. Persistência de Configurações no Banco SQLite ────────────────
     const carregarConfiguracoes = () => {
-        if (localStorage.getItem('timeout_busca') !== null) {
-            inputTimeoutBusca.value = localStorage.getItem('timeout_busca');
-        }
-        if (localStorage.getItem('timeout_pagina') !== null) {
-            inputTimeoutPagina.value = localStorage.getItem('timeout_pagina');
-        }
-        if (localStorage.getItem('headless') !== null) {
-            chkHeadless.checked = localStorage.getItem('headless') === 'true';
-        }
-        if (localStorage.getItem('num_threads') !== null) {
-            selectThreads.value = localStorage.getItem('num_threads');
-            triggerParallelWarning();
-        }
+        fetch('/api/configuracoes')
+            .then(r => r.json())
+            .then(config => {
+                // Sidebar
+                if (config.timeout_busca !== undefined) inputTimeoutBusca.value = config.timeout_busca;
+                if (config.timeout_pagina !== undefined) inputTimeoutPagina.value = config.timeout_pagina;
+                if (config.headless !== undefined) chkHeadless.checked = config.headless;
+                if (config.num_threads !== undefined) {
+                    selectThreads.value = config.num_threads;
+                    triggerParallelWarning();
+                }
+                
+                // Modal
+                document.getElementById('cfg-sheets-url').value = config.sheets_url || '';
+                document.getElementById('cfg-telegram-token').value = config.telegram_token || '';
+                document.getElementById('cfg-telegram-chat-id').value = config.telegram_chat_id || '';
+                document.getElementById('cfg-schedule-enabled').checked = !!config.schedule_enabled;
+                document.getElementById('cfg-schedule-cron').value = config.schedule_cron || '';
+            })
+            .catch(err => console.error("Erro ao carregar configurações do banco:", err));
     };
 
-    const salvarConfiguracoes = () => {
-        localStorage.setItem('timeout_busca', inputTimeoutBusca.value);
-        localStorage.setItem('timeout_pagina', inputTimeoutPagina.value);
-        localStorage.setItem('headless', chkHeadless.checked);
-        localStorage.setItem('num_threads', selectThreads.value);
+    const salvarSidebarConfiguracoes = () => {
+        const payload = {
+            timeout_busca: parseInt(inputTimeoutBusca.value),
+            timeout_pagina: parseInt(inputTimeoutPagina.value),
+            headless: chkHeadless.checked,
+            num_threads: parseInt(selectThreads.value)
+        };
+        fetch('/api/configuracoes', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        })
+        .then(r => r.json())
+        .then(res => {
+            if (!res.success) {
+                console.error("Erro ao salvar configuração da sidebar:", res.error);
+            }
+        })
+        .catch(err => console.error(err));
     };
 
     const triggerParallelWarning = () => {
@@ -127,11 +149,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
     selectThreads.addEventListener('change', () => {
         triggerParallelWarning();
-        salvarConfiguracoes();
+        salvarSidebarConfiguracoes();
     });
-    chkHeadless.addEventListener('change', salvarConfiguracoes);
-    inputTimeoutBusca.addEventListener('input', salvarConfiguracoes);
-    inputTimeoutPagina.addEventListener('input', salvarConfiguracoes);
+    chkHeadless.addEventListener('change', salvarSidebarConfiguracoes);
+    
+    // Debounce simples para salvar timeouts enquanto o usuário digita
+    let saveTimeout = null;
+    const debouncedSalvarSidebar = () => {
+        if (saveTimeout) clearTimeout(saveTimeout);
+        saveTimeout = setTimeout(salvarSidebarConfiguracoes, 800);
+    };
+    inputTimeoutBusca.addEventListener('input', debouncedSalvarSidebar);
+    inputTimeoutPagina.addEventListener('input', debouncedSalvarSidebar);
 
     carregarConfiguracoes();
 
@@ -688,6 +717,54 @@ document.addEventListener('DOMContentLoaded', () => {
         URL.revokeObjectURL(url);
     });
 
+    // ─── 16b. Botão: Gerar Relatório de Pendentes ────────────────────────
+    if (btnRelatorio) {
+        btnRelatorio.addEventListener('click', () => {
+            btnRelatorio.disabled = true;
+            btnRelatorio.innerHTML = '⏳ Gerando...';
+            
+            fetch('/api/relatorio-pendentes')
+                .then(async response => {
+                    const contentType = response.headers.get('content-type');
+                    if (contentType && contentType.includes('application/json')) {
+                        const data = await response.json();
+                        if (response.ok) {
+                            alert(data.message || 'Sem chamados pendentes.');
+                        } else {
+                            throw new Error(data.error || 'Erro ao gerar relatório.');
+                        }
+                        return null;
+                    }
+                    if (!response.ok) {
+                        throw new Error('Erro na resposta do servidor.');
+                    }
+                    return response.blob();
+                })
+                .then(blob => {
+                    if (!blob) return;
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    
+                    // O backend já especifica um nome dinâmico com data e hora.
+                    // Para garantir compatibilidade com downloads no cliente, criamos a tag anchor.
+                    const timestamp = new Date().toISOString().slice(0, 10).replace(/-/g, '_');
+                    a.download = `relatorio_pendentes_${timestamp}.txt`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+                })
+                .catch(err => {
+                    alert('Erro: ' + err.message);
+                })
+                .finally(() => {
+                    btnRelatorio.disabled = false;
+                    btnRelatorio.innerHTML = '📋 Gerar Relatório de Pendentes';
+                });
+        });
+    }
+
     // ─── 17. Eventos do Servidor (Socket.IO) ─────────────────────────────
     socket.on('log_message', (msg) => {
         adicionarLog(msg.data);
@@ -728,4 +805,79 @@ document.addEventListener('DOMContentLoaded', () => {
         limparProgresso();
         adicionarLog('Progresso anterior descartado.', 'log-sistema');
     });
+
+    // ─── 18. Configurações Globais (Modal & Save Form) ─────────────────
+    const modalConfig      = document.getElementById('modal-configuracoes');
+    const btnSettingsToggle = document.getElementById('btn-settings-toggle');
+    const btnCloseConfig   = document.getElementById('btn-fechar-modal-config');
+    const btnCancelConfig  = document.getElementById('btn-cancelar-config');
+    const formConfig       = document.getElementById('form-configuracoes-globais');
+
+    const abrirModalConfig = () => {
+        carregarConfiguracoes();
+        modalConfig.style.display = 'flex';
+    };
+
+    const fecharModalConfig = () => {
+        modalConfig.style.display = 'none';
+        document.getElementById('cfg-nova-senha').value = '';
+        document.getElementById('cfg-confirma-senha').value = '';
+    };
+
+    if (btnSettingsToggle) btnSettingsToggle.addEventListener('click', abrirModalConfig);
+    if (btnCloseConfig) btnCloseConfig.addEventListener('click', fecharModalConfig);
+    if (btnCancelConfig) btnCancelConfig.addEventListener('click', fecharModalConfig);
+
+    // Fecha o modal ao clicar fora dele
+    window.addEventListener('click', (e) => {
+        if (e.target === modalConfig) {
+            fecharModalConfig();
+        }
+    });
+
+    if (formConfig) {
+        formConfig.addEventListener('submit', (e) => {
+            e.preventDefault();
+            
+            const novaSenha = document.getElementById('cfg-nova-senha').value;
+            const confirmaSenha = document.getElementById('cfg-confirma-senha').value;
+            
+            if (novaSenha && novaSenha !== confirmaSenha) {
+                alert("As novas senhas digitadas não coincidem!");
+                return;
+            }
+            
+            const payload = {
+                sheets_url: document.getElementById('cfg-sheets-url').value.trim(),
+                telegram_token: document.getElementById('cfg-telegram-token').value.trim(),
+                telegram_chat_id: document.getElementById('cfg-telegram-chat-id').value.trim(),
+                schedule_enabled: document.getElementById('cfg-schedule-enabled').checked,
+                schedule_cron: document.getElementById('cfg-schedule-cron').value.trim()
+            };
+            
+            if (novaSenha) {
+                payload.nova_senha = novaSenha;
+            }
+            
+            fetch('/api/configuracoes', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            })
+            .then(r => r.json())
+            .then(res => {
+                if (res.success) {
+                    alert("Configurações salvas com sucesso!");
+                    fecharModalConfig();
+                    carregarConfiguracoes();
+                } else {
+                    alert("Erro ao salvar configurações: " + (res.error || "Erro desconhecido"));
+                }
+            })
+            .catch(err => {
+                console.error(err);
+                alert("Falha na requisição ao salvar configurações.");
+            });
+        });
+    }
 });

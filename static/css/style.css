@@ -370,6 +370,33 @@ h1, h2, h3 {
     background-color: #dc2626;
 }
 
+.btn-indigo {
+    background-color: #4f46e5;
+    color: white;
+    border: none;
+    padding: 12px 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: bold;
+    transition: background-color 0.2s, transform 0.1s;
+    box-shadow: 0 4px 6px rgba(79, 70, 229, 0.15);
+}
+
+.btn-indigo:hover:not(:disabled) {
+    background-color: #4338ca;
+}
+
+.btn-indigo:active:not(:disabled) {
+    transform: scale(0.98);
+}
+
+.btn-indigo:disabled {
+    background-color: var(--border-color);
+    color: var(--text-muted);
+    cursor: not-allowed;
+    box-shadow: none;
+}
+
 .btn-link {
     background: none;
     border: none;

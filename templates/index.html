@@ -23,9 +23,15 @@
                     <span id="ws-status-dot" class="status-dot offline"></span>
                     <span id="ws-status-text" class="status-text">Desconectado</span>
                 </div>
+                <button id="btn-settings-toggle" class="theme-btn" aria-label="Configurações Globais" title="Configurações Globais">
+                    ⚙️
+                </button>
                 <button id="theme-toggle" class="theme-btn" aria-label="Alternar tema">
                     <span class="theme-icon">🌙</span>
                 </button>
+                <a href="{{ url_for('logout') }}" class="btn-logout" title="Sair do Painel" style="text-decoration: none; font-size: 1.1rem; display: flex; align-items: center; justify-content: center; background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 50%; width: 38px; height: 38px; box-shadow: var(--card-shadow); transition: transform 0.2s, background-color 0.2s, color 0.2s; color: var(--text-main); cursor: pointer;">
+                    🚪
+                </a>
             </div>
         </header>
 
@@ -101,7 +107,14 @@
                         <button id="btn-parar" class="btn-danger" style="display:none;">🛑 Cancelar</button>
                     </div>
 
-                    <!-- Banner de progresso salvo -->
+                    <!-- Relatório de chamados pendentes -->
+                    <div class="relatorio-container" style="margin-top: 15px; border-top: 1px solid var(--border-color); padding-top: 15px;">
+                        <button id="btn-relatorio" class="btn-indigo" style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                            📋 Gerar Relatório de Pendentes
+                        </button>
+                    </div>
+
+                    <!-- Banner de progresso saved -->
                     <div id="banner-progresso" class="banner-info" style="display:none;">
                         <span id="banner-texto">Existe uma execução incompleta salva.</span>
                         <button id="btn-limpar-prog" class="btn-link">Descartar</button>
@@ -260,6 +273,79 @@
                 <div id="modal-erros-lista" class="erros-lista-container">
                     <p class="text-center">Nenhum erro detalhado disponível para esta execução.</p>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de Configurações Globais -->
+    <div id="modal-configuracoes" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 550px;">
+            <div class="modal-header">
+                <h3>Configurações Globais do Sistema</h3>
+                <button class="modal-close" id="btn-fechar-modal-config">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="form-configuracoes-globais" style="display: flex; flex-direction: column; gap: 16px;">
+                    <!-- Seção: Google Sheets -->
+                    <div style="border-bottom: 1px solid var(--border-color); padding-bottom: 12px;">
+                        <h4 style="margin: 0 0 8px 0; color: var(--primary-color);">Integrador Google Sheets</h4>
+                        <div class="input-row">
+                            <label for="cfg-sheets-url">URL da Planilha de Controle:</label>
+                            <input type="url" id="cfg-sheets-url" class="config-input" placeholder="https://docs.google.com/spreadsheets/d/..." required style="width: 100%; box-sizing: border-box;">
+                        </div>
+                    </div>
+
+                    <!-- Seção: Telegram -->
+                    <div style="border-bottom: 1px solid var(--border-color); padding-bottom: 12px;">
+                        <h4 style="margin: 0 0 8px 0; color: var(--primary-color);">Notificações via Telegram</h4>
+                        <div class="input-grid-2">
+                            <div class="input-row">
+                                <label for="cfg-telegram-token">Token do Bot:</label>
+                                <input type="text" id="cfg-telegram-token" class="config-input" placeholder="Bot Token">
+                            </div>
+                            <div class="input-row">
+                                <label for="cfg-telegram-chat-id">Chat ID:</label>
+                                <input type="text" id="cfg-telegram-chat-id" class="config-input" placeholder="Chat ID">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Seção: Agendador -->
+                    <div style="border-bottom: 1px solid var(--border-color); padding-bottom: 12px;">
+                        <h4 style="margin: 0 0 8px 0; color: var(--primary-color);">Agendamento Automático</h4>
+                        <div class="config-row" style="margin-bottom: 8px;">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="cfg-schedule-enabled">
+                                Habilitar agendador em segundo plano
+                            </label>
+                        </div>
+                        <div class="input-row">
+                            <label for="cfg-schedule-cron">Expressão Cron (5 campos):</label>
+                            <input type="text" id="cfg-schedule-cron" class="config-input" placeholder="*/15 * * * * (a cada 15 min)">
+                            <small style="font-size: 0.72rem; color: var(--text-muted); margin-top: 2px;">Formato crontab clássico: minuto hora dia_do_mes mes dia_da_semana</small>
+                        </div>
+                    </div>
+
+                    <!-- Seção: Senha do Admin -->
+                    <div style="padding-bottom: 12px;">
+                        <h4 style="margin: 0 0 8px 0; color: var(--primary-color);">Alterar Senha do Administrador</h4>
+                        <div class="input-grid-2">
+                            <div class="input-row">
+                                <label for="cfg-nova-senha">Nova Senha:</label>
+                                <input type="password" id="cfg-nova-senha" class="config-input" placeholder="Nova senha">
+                            </div>
+                            <div class="input-row">
+                                <label for="cfg-confirma-senha">Confirmar Senha:</label>
+                                <input type="password" id="cfg-confirma-senha" class="config-input" placeholder="Confirmar senha">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 10px;">
+                        <button type="button" id="btn-cancelar-config" class="btn-export" style="background-color: var(--text-muted);">Cancelar</button>
+                        <button type="submit" class="btn-indigo">Salvar Configurações</button>
+                    </div>
+                </form>
             </div>
         </div>
     </div>

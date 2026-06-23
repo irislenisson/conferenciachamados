@@ -5,4 +5,5 @@ google-auth>=2.27.0
 selenium>=4.18.0
 eventlet>=0.35.2
 python-dotenv>=1.0.0
+apscheduler>=3.10.0
 

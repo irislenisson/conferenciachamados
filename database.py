@@ -9,6 +9,24 @@ def get_db_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
+def gerar_hash_senha(senha: str) -> str:
+    import hashlib
+    import os
+    salt = os.urandom(16)
+    key = hashlib.pbkdf2_hmac('sha256', senha.encode('utf-8'), salt, 100000)
+    return salt.hex() + ":" + key.hex()
+
+def verificar_senha(senha_digitada: str, hash_salvo: str) -> bool:
+    import hashlib
+    try:
+        salt_hex, key_hex = hash_salvo.split(":")
+        salt = bytes.fromhex(salt_hex)
+        key_original = bytes.fromhex(key_hex)
+        key_nova = hashlib.pbkdf2_hmac('sha256', senha_digitada.encode('utf-8'), salt, 100000)
+        return key_original == key_nova
+    except Exception:
+        return False
+
 def inicializar_db():
     """Cria as tabelas caso não existam no SQLite e popula dados iniciais."""
     conn = get_db_connection()
@@ -62,6 +80,48 @@ def inicializar_db():
         )
     ''')
     
+    # Tabela de usuários para login
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS usuarios (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE,
+            password_hash TEXT
+        )
+    ''')
+
+    # Tabela de configurações globais do sistema
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS configuracoes (
+            chave TEXT PRIMARY KEY,
+            valor TEXT
+        )
+    ''')
+
+    # Popula administrador padrão
+    cursor.execute("SELECT 1 FROM usuarios WHERE username = 'admin'")
+    if not cursor.fetchone():
+        pwd_hash = gerar_hash_senha("admin123")
+        cursor.execute("INSERT INTO usuarios (username, password_hash) VALUES ('admin', ?)", (pwd_hash,))
+    
+    # Popula configurações padrões
+    default_configs = [
+        ('sheets_url', 'https://docs.google.com/spreadsheets/d/1ETTEHL0yJ7Y4qaAHqR7cSktEgmsRH6DkWzVkABMI8fU/edit?pli=1&gid=0#gid=0'),
+        ('num_threads', '1'),
+        ('headless', '1'),
+        ('timeout_busca', '8'),
+        ('timeout_pagina', '15'),
+        ('telegram_token', ''),
+        ('telegram_chat_id', ''),
+        ('schedule_cron', ''),
+        ('schedule_enabled', '0')
+    ]
+    for k, v in default_configs:
+        cursor.execute('''
+            INSERT INTO configuracoes (chave, valor)
+            VALUES (?, ?)
+            ON CONFLICT(chave) DO NOTHING
+        ''', (k, v))
+        
     # Popula dados iniciais de mapeamento garantindo que as regras padrão existam
     default_mappings = [
         ('SERVICE DESK NIVEL', 'N1'),
@@ -215,5 +275,69 @@ def deletar_mapeamento(mapping_id):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('DELETE FROM mapeamento_torres WHERE id = ?', (mapping_id,))
+    conn.commit()
+    conn.close()
+
+# ─── Funções CRUD para Usuários e Configurações ───────────────────────────
+
+def obter_usuario(username):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, username, password_hash FROM usuarios WHERE username = ?", (username,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def alterar_senha_usuario(username, nova_senha):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    pwd_hash = gerar_hash_senha(nova_senha)
+    cursor.execute("UPDATE usuarios SET password_hash = ? WHERE username = ?", (pwd_hash, username))
+    conn.commit()
+    conn.close()
+    return True
+
+def obter_configuracoes():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT chave, valor FROM configuracoes")
+    rows = cursor.fetchall()
+    conn.close()
+    
+    # Default values fallback
+    configs = {
+        'sheets_url': 'https://docs.google.com/spreadsheets/d/1ETTEHL0yJ7Y4qaAHqR7cSktEgmsRH6DkWzVkABMI8fU/edit?pli=1&gid=0#gid=0',
+        'num_threads': 1,
+        'headless': True,
+        'timeout_busca': 8,
+        'timeout_pagina': 15,
+        'telegram_token': '',
+        'telegram_chat_id': '',
+        'schedule_cron': '',
+        'schedule_enabled': False
+    }
+    
+    for r in rows:
+        k = r['chave']
+        v = r['valor']
+        if k in ['num_threads', 'timeout_busca', 'timeout_pagina']:
+            try: configs[k] = int(v)
+            except Exception: pass
+        elif k in ['headless', 'schedule_enabled']:
+            configs[k] = v == '1'
+        else:
+            configs[k] = v
+    return configs
+
+def atualizar_configuracoes(configs_dict):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    for k, v in configs_dict.items():
+        val_str = '1' if v is True else ('0' if v is False else str(v).strip())
+        cursor.execute('''
+            INSERT INTO configuracoes (chave, valor)
+            VALUES (?, ?)
+            ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor
+        ''', (k, val_str))
     conn.commit()
     conn.close()

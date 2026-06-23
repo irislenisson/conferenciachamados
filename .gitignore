@@ -25,6 +25,8 @@ build/
 *.tmp
 progresso.json
 historico.db
+sessao_compartilhada.json
+scratch/
 
 
 # IDEs
