@@ -1,3 +1,3 @@
 @echo off
 cd /d "%~dp0"
-start "" ".venv\Scripts\pythonw.exe" app.py
+start /B "" ".venv\Scripts\python.exe" app.py > server.log 2>&1
