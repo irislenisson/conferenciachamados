@@ -73,6 +73,47 @@ document.addEventListener('DOMContentLoaded', () => {
     let countColE = 0;
     let countColG = 0;
 
+    // Cronômetro dinâmico em tempo real
+    let cronometroInterval = null;
+    let cronometroSegundos = 0.0;
+
+    const iniciarCronometro = () => {
+        pararCronometro();
+        cronometroSegundos = 0.0;
+        cronometroInterval = setInterval(() => {
+            cronometroSegundos += 0.1;
+            const tempoFormat = cronometroSegundos > 60 
+                ? `${Math.floor(cronometroSegundos/60)}m ${Math.round(cronometroSegundos%60)}s` 
+                : `${cronometroSegundos.toFixed(1)}s`;
+            metricTempo.textContent = tempoFormat;
+        }, 100);
+    };
+
+    const pausarCronometro = () => {
+        if (cronometroInterval) {
+            clearInterval(cronometroInterval);
+            cronometroInterval = null;
+        }
+    };
+
+    const retomarCronometro = () => {
+        if (cronometroInterval) clearInterval(cronometroInterval);
+        cronometroInterval = setInterval(() => {
+            cronometroSegundos += 0.1;
+            const tempoFormat = cronometroSegundos > 60 
+                ? `${Math.floor(cronometroSegundos/60)}m ${Math.round(cronometroSegundos%60)}s` 
+                : `${cronometroSegundos.toFixed(1)}s`;
+            metricTempo.textContent = tempoFormat;
+        }, 100);
+    };
+
+    const pararCronometro = () => {
+        if (cronometroInterval) {
+            clearInterval(cronometroInterval);
+            cronometroInterval = null;
+        }
+    };
+
     // ─── 1. Gerenciamento de Tema (Dark/Light) ───────────────────────────
     const applyTheme = (theme) => {
         if (theme === 'dark') {
@@ -638,6 +679,7 @@ document.addEventListener('DOMContentLoaded', () => {
     btnIniciar.addEventListener('click', () => {
         setBotoes(true);
         resetarContadoresDashboard();
+        iniciarCronometro(); // Inicia cronômetro em tempo real
         progressContainer.style.display = 'block';
         progressBar.style.width = '0%';
         progressText.textContent = 'Iniciando...';
@@ -659,6 +701,7 @@ document.addEventListener('DOMContentLoaded', () => {
         progressContainer.style.display = 'block';
         consoleLogs.innerHTML = '<div class="log-line log-sistema">> Retomando execucao anterior...</div>';
         resetarGruposDesconhecidos();
+        retomarCronometro(); // Retoma cronômetro em tempo real
         
         socket.emit('continuar_conferencia', {
             headless: chkHeadless.checked,
@@ -676,12 +719,14 @@ document.addEventListener('DOMContentLoaded', () => {
             btnPausar.textContent = '▶️ Retomar';
             btnPausar.className = 'btn-secondary';
             isPaused = true;
+            pausarCronometro(); // Pausa o cronômetro
         } else {
             // Solicita retomada
             socket.emit('retomar_conferencia');
             btnPausar.textContent = '⏸ Pausar';
             btnPausar.className = 'btn-warning';
             isPaused = false;
+            retomarCronometro(); // Retoma o cronômetro
         }
     });
 
@@ -691,6 +736,7 @@ document.addEventListener('DOMContentLoaded', () => {
             btnPausar.disabled = true;
             btnParar.disabled = true;
             btnParar.textContent = 'Encerrando...';
+            pararCronometro(); // Para o cronômetro
         }
     });
 
@@ -777,6 +823,7 @@ document.addEventListener('DOMContentLoaded', () => {
             btnPausar.disabled = false;
             btnParar.disabled = false;
             btnParar.textContent = '🛑 Cancelar';
+            pararCronometro(); // Para o cronômetro
             carregarHistorico(); 
         }
     });
@@ -791,6 +838,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     socket.on('automacao_bloqueada', () => {
         setBotoes(false);
+        pararCronometro(); // Para o cronômetro
     });
 
     socket.on('automacao_concluida', () => {
@@ -798,6 +846,7 @@ document.addEventListener('DOMContentLoaded', () => {
         btnPausar.disabled = false;
         btnParar.disabled = false;
         btnParar.textContent = '🛑 Cancelar';
+        pararCronometro(); // Para o cronômetro
         carregarHistorico();
     });
 
