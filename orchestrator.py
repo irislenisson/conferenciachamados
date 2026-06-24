@@ -126,10 +126,10 @@ class AutomationOrchestrator:
             session = CASDMSession(ca_email, ca_password, thread_id, self.headless, self.log, orchestrator=self)
             scraper = CASDMScraper(session, self.log, self.mapeamentos_cache)
             
-            # Escalonamento por thread: 1.5s é suficiente pois _chrome_lock
-            # já serializa a criação do Chrome — o delay extra era redundante.
+            # Escalonamento por thread: reduzido de 1.5s para 1.0s. Como o _chrome_lock
+            # já serializa a criação do Chrome, 1.0s é suficiente e acelera o início.
             if thread_id > 1:
-                delay = (thread_id - 1) * 1.5
+                delay = (thread_id - 1) * 1.0
                 self.log(f"[Navegador {thread_id}] Aguardando {delay:.1f}s para inicializacao escalonada...")
                 time.sleep(delay)
                 
