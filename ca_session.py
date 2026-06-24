@@ -104,8 +104,8 @@ class CASDMSession:
             self.driver.set_page_load_timeout(30)
             self.driver.set_script_timeout(30)
             self.wait = WebDriverWait(self.driver, 10)
-            # Pequena pausa para o ChromeDriver estabilizar antes do proximo browser
-            time.sleep(1.0)
+            # Pequena pausa para o ChromeDriver estabilizar antes do proximo browser (reduzido de 1.0s para 0.5s)
+            time.sleep(0.5)
 
         # 2. Checkpoint após iniciar o Chrome
         if queue_indices:
