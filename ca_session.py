@@ -145,83 +145,35 @@ class CASDMSession:
 
             cookies_restaurados = False
 
-            # ── Tenta reutilizar sessao de outra thread que ja fez login ──
-            if os.path.exists(self.cookie_file) and os.path.exists(self.shared_session_file):
-                try:
-                    self.log_callback(f"[Navegador {self.thread_id}] Tentando restaurar sessao compartilhada...")
-                    with _cookies_file_lock:
-                        with open(self.cookie_file, 'r', encoding='utf-8') as f:
-                            cookies = json.load(f)
-                        with open(self.shared_session_file, 'r', encoding='utf-8') as f:
-                            shared_data = json.load(f)
-                            shared_sid = shared_data.get("sid")
-                            shared_wname = shared_data.get("window_name")
+            # O CA SDM (servidor intranet) não tolera o compartilhamento de um mesmo SID/sessão 
+            # por múltiplos navegadores headless paralelos rodando simultaneamente. Isso invalidava o SID
+            # e causava expiração e loops constantes de reautenticação.
+            # Cada thread agora realiza o seu próprio login isolado de forma sequencial sob o lock de login.
 
-                    # Navega para o dominio base para poder injetar o cookie
-                    self.driver.get("http://vms-ca-sdm:8080/")
-                    for cookie in cookies:
-                        try:
-                            self.driver.add_cookie(cookie)
-                        except Exception:
-                            pass
-                    if shared_wname:
-                        try:
-                            self.driver.execute_script(f"window.name = '{shared_wname}';")
-                        except Exception:
-                            pass
-
-                    menu_url = f"http://vms-ca-sdm:8080/CAisd/pdmweb.exe?SID={shared_sid}"
-                    self.log_callback(f"[Navegador {self.thread_id}] Navegando com SID compartilhado: {shared_sid}")
-                    self.driver.get(menu_url)
-
-                    WebDriverWait(self.driver, 10).until(
+            # ── Login completo isolado ──
+            self.fechar_alertas("pre-login")
+            try:
+                # Navega para a pagina de login se ainda nao estiver la
+                if "USERNAME" not in self.driver.page_source:
+                    self.driver.get("http://vms-ca-sdm:8080/CAisd/pdmweb.exe")
+                    WebDriverWait(self.driver, 15).until(
                         lambda d: len(d.find_elements(By.NAME, "USERNAME")) > 0 or
-                                  len(d.find_elements(By.NAME, "gobtn")) > 0 or
-                                  "ahd04401" in d.page_source.lower() or
-                                  "falha de autentica" in d.page_source.lower()
+                                  len(d.find_elements(By.NAME, "gobtn")) > 0
                     )
+            except Exception:
+                pass
 
-                    if len(self.driver.find_elements(By.NAME, "gobtn")) > 0:
-                        self.log_callback(f"[Navegador {self.thread_id}] [OK] Sessao compartilhada restaurada (SID: {shared_sid}).")
-                        cookies_restaurados = True
-                    else:
-                        self.log_callback(f"[Navegador {self.thread_id}] SID expirado. Realizando novo login...")
-                except Exception as e_restore:
-                    self.log_callback(f"[Navegador {self.thread_id}] [AVISO] Falha ao restaurar sessao: {str(e_restore)[:100]}")
+            self.fazer_login()
 
-            # ── Login completo se nao foi possivel restaurar ──
-            if not cookies_restaurados:
-                self.fechar_alertas("pre-login")
-                try:
-                    # Navega para a pagina de login se ainda nao estiver la
-                    if "USERNAME" not in self.driver.page_source:
-                        self.driver.get("http://vms-ca-sdm:8080/CAisd/pdmweb.exe")
-                        WebDriverWait(self.driver, 15).until(
-                            lambda d: len(d.find_elements(By.NAME, "USERNAME")) > 0 or
-                                      len(d.find_elements(By.NAME, "gobtn")) > 0
-                        )
-                except Exception:
-                    pass
+            new_sid = self.extrair_sid_da_pagina()
+            self.log_callback(f"[Navegador {self.thread_id}] [OK] Login concluido. Novo SID: {new_sid}")
 
-                self.fazer_login()
+            # Não salvamos cookies globais compartilhados para evitar que threads concorrentes
+            # tentem restaurar a mesma sessão. O isolamento de sessão garante o correto funcionamento e estabilidade.
 
-                new_sid = self.extrair_sid_da_pagina()
-                self.log_callback(f"[Navegador {self.thread_id}] [OK] Login concluido. Novo SID: {new_sid}")
-
-                try:
-                    cookies = self.driver.get_cookies()
-                    window_name = self.driver.execute_script("return window.name;")
-                    with _cookies_file_lock:
-                        with open(self.cookie_file, 'w', encoding='utf-8') as f:
-                            json.dump(cookies, f)
-                        with open(self.shared_session_file, 'w', encoding='utf-8') as f:
-                            json.dump({'sid': new_sid, 'window_name': window_name, 'timestamp': time.time()}, f)
-                except Exception as e_save:
-                    self.log_callback(f"[Navegador {self.thread_id}] [AVISO] Falha ao salvar cookies/SID: {str(e_save)}")
-
-                # Pausa apos login: evita que o proximo browser conecte imediatamente
-                self.log_callback(f"[Navegador {self.thread_id}] Aguardando 2s antes de liberar lock de login...")
-                time.sleep(2.0)
+            # Pausa apos login: evita que o proximo browser conecte imediatamente
+            self.log_callback(f"[Navegador {self.thread_id}] Aguardando 2s antes de liberar lock de login...")
+            time.sleep(2.0)
 
         finally:
             _login_lock.release()
