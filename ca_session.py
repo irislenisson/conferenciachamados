@@ -67,6 +67,7 @@ class CASDMSession:
             options.add_argument("--disable-dev-shm-usage")
         
         # Desativar extensões, infobars e habilitar automação controlada desligada para velocidade
+        options.page_load_strategy = 'eager'
         options.add_argument("--disable-extensions")
         options.add_argument("--disable-infobars")
         options.add_argument("--disable-blink-features=AutomationControlled")
