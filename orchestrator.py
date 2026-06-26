@@ -130,17 +130,8 @@ class AutomationOrchestrator:
             session = CASDMSession(ca_email, ca_password, thread_id, self.headless, self.log, orchestrator=self)
             scraper = CASDMScraper(session, self.log, self.mapeamentos_cache)
             
-            # Escalonamento por thread: reduzido de 1.0s para 0.5s. Como o _chrome_lock
-            # já serializa a criação do Chrome, 0.5s é suficiente e acelera o início.
-            if thread_id > 1:
-                delay = (thread_id - 1) * 0.5
-                self.log(f"[Navegador {thread_id}] Aguardando {delay:.1f}s para inicializacao escalonada...")
-                time.sleep(delay)
-                
-            # Re-verifica após o delay
-            if queue_indices.empty():
-                self.log(f"[Navegador {thread_id}] Fila esvaziou durante o delay. Cancelando driver.")
-                return
+            # A inicialização sequencial do Chrome já é coordenada pelo lock de boot no backend,
+            # eliminando a necessidade de delays artificiais na thread principal.
                 
             try:
                 driver = session.inicializar_driver(queue_indices)

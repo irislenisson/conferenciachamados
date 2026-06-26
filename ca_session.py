@@ -84,11 +84,14 @@ class CASDMSession:
         options.add_argument("--disable-background-timer-throttling")
         options.add_argument("--disable-renderer-backgrounding")
         
-        # ── Perfil temporário exclusivo por thread ──────────────────────────────
+        # ── Perfil persistente exclusivo por thread ──────────────────────────────
         # CRÍTICO: --user-data-dir garante isolamento total do Chrome do usuário.
         # Sem isso, o ChromeDriver pode compartilhar sessão com janelas abertas
         # no desktop e fechá-las ao fazer driver.quit().
-        self._temp_profile_dir = tempfile.mkdtemp(prefix=f"ca_sdm_nav{self.thread_id}_")
+        # Usamos uma pasta fixa (perfis_chrome) para reter os cookies e login entre varreduras.
+        perfis_dir = os.path.abspath("perfis_chrome")
+        os.makedirs(perfis_dir, exist_ok=True)
+        self._temp_profile_dir = os.path.join(perfis_dir, f"perfil_nav{self.thread_id}")
         options.add_argument(f"--user-data-dir={self._temp_profile_dir}")
         options.add_argument("--profile-directory=Default")
 
@@ -350,11 +353,5 @@ class CASDMSession:
             self.driver = None
             self.is_initialized = False
 
-        # Remove o diretório temporário exclusivo desta thread
-        if self._temp_profile_dir and os.path.exists(self._temp_profile_dir):
-            try:
-                shutil.rmtree(self._temp_profile_dir, ignore_errors=True)
-                self.log_callback(f"[Navegador {self.thread_id}] Perfil temporario removido.")
-            except Exception:
-                pass
-            self._temp_profile_dir = None
+        # Como o perfil agora é persistente para reter login, não removemos mais o diretório.
+        self._temp_profile_dir = None
