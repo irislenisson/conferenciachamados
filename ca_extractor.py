@@ -25,10 +25,10 @@ class CASDMScraper:
         self.session.fechar_alertas("pre-gobtn")
         try:
             driver.switch_to.default_content()
-            WebDriverWait(driver, timeout_busca).until(
+            WebDriverWait(driver, timeout_busca, poll_frequency=0.1).until(
                 EC.frame_to_be_available_and_switch_to_it("gobtn")
             )
-            select_el = WebDriverWait(driver, timeout_busca).until(
+            select_el = WebDriverWait(driver, timeout_busca, poll_frequency=0.1).until(
                 EC.presence_of_element_located((By.NAME, "ticket_type"))
             )
 
@@ -148,7 +148,7 @@ class CASDMScraper:
 
         # -- Coluna D: Torre -----------
         grupo_raw = ""
-        for seletor in [(By.XPATH, "//*[@pdmqa='group']"), (By.ID, "df_5_2")]:
+        for seletor in [(By.CSS_SELECTOR, "[pdmqa='group']"), (By.ID, "df_5_2")]:
             try:
                 el = driver.find_element(*seletor)
                 txt = el.text.strip()
@@ -170,7 +170,7 @@ class CASDMScraper:
         # -- Coluna E: Data Abertura -----------
         if not data_envio_atual:
             campo_data_abertura = ""
-            for seletor in [(By.XPATH, "//*[@pdmqa='open_date']"), (By.ID, "df_8_0")]:
+            for seletor in [(By.CSS_SELECTOR, "[pdmqa='open_date']"), (By.ID, "df_8_0")]:
                 try:
                     el = driver.find_element(*seletor)
                     txt = el.text.strip()
@@ -190,7 +190,7 @@ class CASDMScraper:
 
         # -- Status Real -----------
         status_real_ca = ""
-        for seletor in [(By.XPATH, "//*[@pdmqa='status']"), (By.ID, "df_0_2_status")]:
+        for seletor in [(By.CSS_SELECTOR, "[pdmqa='status']"), (By.ID, "df_0_2_status")]:
             try:
                 el = driver.find_element(*seletor)
                 txt = el.text.strip()
@@ -204,11 +204,11 @@ class CASDMScraper:
         if status_real_ca.upper() in STATUS_RESOLVIDOS and not data_resolucao_atual:
             campo_data_hora = ""
             for seletor in [
-                (By.XPATH, "//*[@pdmqa='resolve_date']"),
+                (By.CSS_SELECTOR, "[pdmqa='resolve_date']"),
                 (By.ID,    "df_8_2"),
-                (By.XPATH, "//*[@pdmqa='close_date']"),
+                (By.CSS_SELECTOR, "[pdmqa='close_date']"),
                 (By.ID,    "df_8_3"),
-                (By.XPATH, "//*[@pdmqa='last_mod_dt']"),
+                (By.CSS_SELECTOR, "[pdmqa='last_mod_dt']"),
             ]:
                 try:
                     el = driver.find_element(*seletor)

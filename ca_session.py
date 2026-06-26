@@ -157,7 +157,7 @@ class CASDMSession:
                 # Navega para a pagina de login se ainda nao estiver la
                 if "USERNAME" not in self.driver.page_source:
                     self.driver.get("http://vms-ca-sdm:8080/CAisd/pdmweb.exe")
-                    WebDriverWait(self.driver, 15).until(
+                    WebDriverWait(self.driver, 15, poll_frequency=0.1).until(
                         lambda d: len(d.find_elements(By.NAME, "USERNAME")) > 0 or
                                   len(d.find_elements(By.NAME, "gobtn")) > 0
                     )
@@ -256,7 +256,7 @@ class CASDMSession:
             username_field = None
             for tentativa_campo in range(5):
                 try:
-                    username_field = WebDriverWait(self.driver, 4).until(
+                    username_field = WebDriverWait(self.driver, 4, poll_frequency=0.1).until(
                         EC.presence_of_element_located((By.NAME, "USERNAME"))
                     )
                     break
@@ -299,7 +299,7 @@ class CASDMSession:
             try:
                 # Tenta aguardar o frame gobtn por até 20s
                 # Pode lançar UnexpectedAlertPresentException se o CA SDM exibir alerta
-                WebDriverWait(self.driver, 20).until(
+                WebDriverWait(self.driver, 20, poll_frequency=0.1).until(
                     EC.frame_to_be_available_and_switch_to_it("gobtn")
                 )
                 self.driver.switch_to.default_content()

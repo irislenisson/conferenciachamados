@@ -226,12 +226,12 @@ class AutomationOrchestrator:
                         try:
                             busca_ok = scraper.buscar_no_gobtn(id_chamado, valor_ticket, timeout_busca=self.timeout_busca)
                             if busca_ok:
-                                WebDriverWait(session.driver, 8.0).until(lambda d: len(d.window_handles) > 1)
+                                WebDriverWait(session.driver, 8.0, poll_frequency=0.1).until(lambda d: len(d.window_handles) > 1)
                                 with self.stats_lock:
                                     self.stats['plano_a'] += 1
                         except Exception:
                             busca_ok = False
-
+  
                         if not busca_ok:
                             # Plano B
                             session.fechar_driver()
@@ -239,7 +239,7 @@ class AutomationOrchestrator:
                             try:
                                 busca_ok = scraper.buscar_no_gobtn(id_chamado, valor_ticket, timeout_busca=self.timeout_busca + 4)
                                 if busca_ok:
-                                    WebDriverWait(session.driver, 10.0).until(lambda d: len(d.window_handles) > 1)
+                                    WebDriverWait(session.driver, 10.0, poll_frequency=0.1).until(lambda d: len(d.window_handles) > 1)
                                     with self.stats_lock:
                                         self.stats['plano_b'] += 1
                             except Exception:
