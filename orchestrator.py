@@ -62,6 +62,10 @@ class AutomationOrchestrator:
         # Otimizado: Buffer para atualização em lote no Google Sheets
         self.cells_to_write_buffer = []
         
+        # Cache em memoria para evitar buscas duplicadas no Selenium
+        self.resultados_cache = {}
+        self.cache_lock = threading.Lock()
+        
         # Estatísticas de execução
         self.stats = {
             'sucessos': 0,
@@ -178,6 +182,71 @@ class AutomationOrchestrator:
 
                 self.log(f"\n{'-'*55}\n[Navegador {thread_id}] [LINHA {idx}] {id_chamado} | Status H: {status_h}")
 
+                # ── Checagem de Cache ──────────────────────────────
+                with self.cache_lock:
+                    cached_res = self.resultados_cache.get(id_chamado)
+                    if cached_res == "processando":
+                        # Outra thread ja esta extraindo esse chamado.
+                        # Devolvemos para a fila e tentamos processar outro item para nao gastar processamento.
+                        self.log(f"[Navegador {thread_id}] Linha {idx}: [CACHE] Chamado {id_chamado} esta sendo extraido por outra thread. Devolvendo linha para a fila.")
+                        queue_indices.put(idx)
+                        time.sleep(0.5)  # Pausa de sanidade para nao ciclar intensivamente
+                        continue
+                    elif cached_res is None:
+                        # Reserva o chamado para esta thread buscar
+                        self.resultados_cache[id_chamado] = "processando"
+
+                if cached_res is not None and cached_res != "processando":
+                    self.log(f"[Navegador {thread_id}] Linha {idx}: [CACHE] Usando informacoes cacheadas para Chamado {id_chamado}.")
+                    if isinstance(cached_res, dict) and cached_res.get('nao_localizado'):
+                        self.log(f"[Navegador {thread_id}] Linha {idx}: [CACHE] Chamado ja identificado anteriormente como NAO LOCALIZADO.")
+                        with self.stats_lock:
+                            self.stats['avisos'] += 1
+                    elif isinstance(cached_res, dict):
+                        cells_to_update = []
+                        val_d = cached_res.get('col_d_val')
+                        val_e = cached_res.get('col_e_val')
+                        val_g = cached_res.get('col_g_val')
+
+                        if val_d and val_d != data_torre_atual:
+                            cells_to_update.append(Cell(row=idx, col=4, value=val_d))
+                            with self.stats_lock: self.stats['col_d'] += 1; self.stats['sucessos'] += 1
+                        if val_e and not data_envio_atual:
+                            cells_to_update.append(Cell(row=idx, col=5, value=val_e))
+                            with self.stats_lock: self.stats['col_e'] += 1; self.stats['sucessos'] += 1
+                        if val_g:
+                            cells_to_update.append(Cell(row=idx, col=7, value=val_g))
+                            with self.stats_lock: self.stats['col_g'] += 1; self.stats['sucessos'] += 1
+
+                        if not cells_to_update:
+                            with self.stats_lock:
+                                self.stats['sucessos'] += 1
+
+                        if cells_to_update:
+                            with self.buffer_lock:
+                                self.cells_to_write_buffer.extend(cells_to_update)
+                                buffer_size = len(self.cells_to_write_buffer)
+                            
+                            if buffer_size >= 25:
+                                try:
+                                    with self.buffer_lock:
+                                        cells_to_write = list(self.cells_to_write_buffer)
+                                        self.cells_to_write_buffer.clear()
+                                    if cells_to_write:
+                                        sheets_service.atualizar_celulas(cells_to_write)
+                                except Exception as e_partial:
+                                    self.log(f"[ERRO] Parcial (Cache): {e_partial}")
+                                    with self.buffer_lock:
+                                        self.cells_to_write_buffer.extend(cells_to_write)
+
+                    with self.progress_lock:
+                        self.ja_processados.add(idx)
+                        if len(self.ja_processados) % 5 == 0:
+                            self.salvar_progresso()
+                        if self.socketio_emit_callback:
+                            self.socketio_emit_callback('progresso', {'atual': len(self.ja_processados), 'total': self.total_pendentes})
+                    continue
+
                 id_upper = id_chamado.upper()
                 if id_upper.startswith('I'):
                     valor_ticket = "go_in"
@@ -233,17 +302,34 @@ class AutomationOrchestrator:
                             busca_ok = False
   
                         if not busca_ok:
-                            # Plano B
-                            session.fechar_driver()
-                            session.inicializar_driver()
+                            # Plano B - Primeiro tenta recuperar sessao in-place sem reiniciar o Chrome
+                            self.log(f"[Navegador {thread_id}] [Plano B] Busca inicial falhou. Tentando recuperar sessao in-place...")
                             try:
+                                session.driver.switch_to.default_content()
+                                session.driver.get("http://vms-ca-sdm:8080/CAisd/pdmweb.exe")
+                                session.fazer_login()
                                 busca_ok = scraper.buscar_no_gobtn(id_chamado, valor_ticket, timeout_busca=self.timeout_busca + 4)
                                 if busca_ok:
-                                    WebDriverWait(session.driver, 10.0, poll_frequency=0.1).until(lambda d: len(d.window_handles) > 1)
+                                    WebDriverWait(session.driver, 8.0, poll_frequency=0.1).until(lambda d: len(d.window_handles) > 1)
                                     with self.stats_lock:
                                         self.stats['plano_b'] += 1
-                            except Exception:
+                                    self.log(f"[Navegador {thread_id}] [Plano B] Sessao in-place recuperada com sucesso.")
+                            except Exception as e_recovery:
+                                self.log(f"[Navegador {thread_id}] [Plano B] Recuperacao in-place falhou ({str(e_recovery)[:100]}). Reiniciando Chrome...")
                                 busca_ok = False
+
+                            if not busca_ok:
+                                # Fallback do Plano B: Reabertura completa do Chrome
+                                session.fechar_driver()
+                                session.inicializar_driver()
+                                try:
+                                    busca_ok = scraper.buscar_no_gobtn(id_chamado, valor_ticket, timeout_busca=self.timeout_busca + 4)
+                                    if busca_ok:
+                                        WebDriverWait(session.driver, 10.0, poll_frequency=0.1).until(lambda d: len(d.window_handles) > 1)
+                                        with self.stats_lock:
+                                            self.stats['plano_b'] += 1
+                                except Exception:
+                                    busca_ok = False
 
                         if not busca_ok:
                             self.log(f"[Navegador {thread_id}] Linha {idx}: [AVISO] Nao encontrado.")
@@ -269,40 +355,54 @@ class AutomationOrchestrator:
                             timeout_pagina=self.timeout_pagina
                         )
 
-                        if resultado:
-                            cells_to_update = []
-                            val_d = resultado.get('col_d_val')
-                            val_e = resultado.get('col_e_val')
-                            val_g = resultado.get('col_g_val')
-
-                            if val_d and val_d != data_torre_atual:
-                                cells_to_update.append(Cell(row=idx, col=4, value=val_d))
-                                with self.stats_lock: self.stats['col_d'] += 1; self.stats['sucessos'] += 1
-                            if val_e and not data_envio_atual:
-                                cells_to_update.append(Cell(row=idx, col=5, value=val_e))
-                                with self.stats_lock: self.stats['col_e'] += 1; self.stats['sucessos'] += 1
-                            if val_g:
-                                cells_to_update.append(Cell(row=idx, col=7, value=val_g))
-                                with self.stats_lock: self.stats['col_g'] += 1; self.stats['sucessos'] += 1
-
-                            if cells_to_update:
-                                with self.buffer_lock:
-                                    self.cells_to_write_buffer.extend(cells_to_update)
-                                    buffer_size = len(self.cells_to_write_buffer)
-                                
-                                if buffer_size >= 25:
-                                    try:
-                                        with self.buffer_lock:
-                                            cells_to_write = list(self.cells_to_write_buffer)
-                                            self.cells_to_write_buffer.clear()
-                                        if cells_to_write:
-                                            sheets_service.atualizar_celulas(cells_to_write)
-                                    except Exception as e_partial:
-                                        self.log(f"[ERRO] Parcial: {e_partial}")
-                                        with self.buffer_lock:
-                                            self.cells_to_write_buffer.extend(cells_to_write)
+                        # Coloca no cache
+                        with self.cache_lock:
+                            if resultado:
+                                self.resultados_cache[id_chamado] = resultado
                             else:
-                                with self.stats_lock: self.stats['sucessos'] += 1
+                                # Se falhou com None (timeout/erro), removemos a marcacao de 'processando'
+                                # para que o chamado possa ser tentado novamente se necessario.
+                                if self.resultados_cache.get(id_chamado) == "processando":
+                                    del self.resultados_cache[id_chamado]
+
+                        if resultado:
+                            if resultado.get('nao_localizado'):
+                                with self.stats_lock:
+                                    self.stats['avisos'] += 1
+                            else:
+                                cells_to_update = []
+                                val_d = resultado.get('col_d_val')
+                                val_e = resultado.get('col_e_val')
+                                val_g = resultado.get('col_g_val')
+
+                                if val_d and val_d != data_torre_atual:
+                                    cells_to_update.append(Cell(row=idx, col=4, value=val_d))
+                                    with self.stats_lock: self.stats['col_d'] += 1; self.stats['sucessos'] += 1
+                                if val_e and not data_envio_atual:
+                                    cells_to_update.append(Cell(row=idx, col=5, value=val_e))
+                                    with self.stats_lock: self.stats['col_e'] += 1; self.stats['sucessos'] += 1
+                                if val_g:
+                                    cells_to_update.append(Cell(row=idx, col=7, value=val_g))
+                                    with self.stats_lock: self.stats['col_g'] += 1; self.stats['sucessos'] += 1
+
+                                if cells_to_update:
+                                    with self.buffer_lock:
+                                        self.cells_to_write_buffer.extend(cells_to_update)
+                                        buffer_size = len(self.cells_to_write_buffer)
+                                    
+                                    if buffer_size >= 25:
+                                        try:
+                                            with self.buffer_lock:
+                                                cells_to_write = list(self.cells_to_write_buffer)
+                                                self.cells_to_write_buffer.clear()
+                                            if cells_to_write:
+                                                sheets_service.atualizar_celulas(cells_to_write)
+                                        except Exception as e_partial:
+                                            self.log(f"[ERRO] Parcial: {e_partial}")
+                                            with self.buffer_lock:
+                                                self.cells_to_write_buffer.extend(cells_to_write)
+                                else:
+                                    with self.stats_lock: self.stats['sucessos'] += 1
 
                         try:
                             session.driver.close()

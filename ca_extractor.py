@@ -70,10 +70,11 @@ class CASDMScraper:
     def extrair_dados_popup(self, id_chamado, index, data_torre_atual, data_envio_atual, grupos_nao_mapeados, data_resolucao_atual="", timeout_pagina=15):
         driver = self.session.driver
 
-        # #2: Substitui loop de polling manual (200ms × N) por WebDriverWait real.
-        # Detecta o carregamento imediatamente ao invés de aguardar o ciclo inteiro.
         chamado_carregado = False
         chamado_nao_encontrado = False
+
+        # Contador no escopo da closure para limitar a leitura pesada de page_source a cada 1.0s (10 checagens de 100ms)
+        iteracoes = [0]
 
         def _popup_pronto(d):
             """Condição composta: retorna True assim que o popup estiver pronto."""
@@ -98,11 +99,15 @@ class CASDMScraper:
                     if any(k in titulo.lower() for k in ("não localizado", "não localizada", "não existe")):
                         return "nao_encontrado"
 
-                page = d.page_source.lower()
-                if any(k in page for k in ("não localizado", "não localizada", "não existe")):
-                    return "nao_encontrado"
+                # Limita a leitura pesada do DOM inteiro via page_source
+                iteracoes[0] += 1
+                if iteracoes[0] % 10 == 0:
+                    page = d.page_source.lower()
+                    if any(k in page for k in ("não localizado", "não localizada", "não existe")):
+                        return "nao_encontrado"
 
-                if d.find_elements(By.XPATH, "//*[@pdmqa='status'] | //*[@id='df_0_2_status']"):
+                # Busca rápida de carregado usando seletores CSS ou ID
+                if d.find_elements(By.CSS_SELECTOR, "[pdmqa='status']") or d.find_elements(By.ID, "df_0_2_status"):
                     return "carregado"
 
                 return False  # ainda carregando
@@ -127,7 +132,7 @@ class CASDMScraper:
 
         if chamado_nao_encontrado:
             self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [NAO LOCALIZADO] Chamado {id_chamado} nao localizado.")
-            return None
+            return {"nao_localizado": True}
 
         if not chamado_carregado:
             self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [TIMEOUT] Popup do chamado {id_chamado} nao carregou.")
