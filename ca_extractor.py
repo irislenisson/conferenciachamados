@@ -73,11 +73,8 @@ class CASDMScraper:
         chamado_carregado = False
         chamado_nao_encontrado = False
 
-        # Contador no escopo da closure para limitar a leitura pesada de page_source a cada 1.0s (10 checagens de 100ms)
-        iteracoes = [0]
-
         def _popup_pronto(d):
-            """Condição composta: retorna True assim que o popup estiver pronto."""
+            """Condição composta em JS: retorna 'carregado', 'nao_encontrado' ou False."""
             try:
                 self.session.fechar_alertas("aguardando popup")
                 d.switch_to.default_content()
@@ -86,30 +83,44 @@ class CASDMScraper:
                 if any(k in top_title for k in ("logon", "login", "expirou", "erro", "error")):
                     raise WebDriverException(f"Erro de sessao detectado: {d.title}")
 
-                if d.find_elements(By.NAME, "USERNAME"):
-                    raise WebDriverException("Sessao expirada (login detectado no popup).")
-
                 d.switch_to.frame("cai_main")
-                titulo = d.title.strip()
-                id_upper = id_chamado.upper()
 
-                if titulo:
-                    if id_upper in titulo.upper():
-                        return "carregado"
-                    if any(k in titulo.lower() for k in ("não localizado", "não localizada", "não existe")):
-                        return "nao_encontrado"
+                # Injeta JS síncrono para verificar estado no frame de forma rápida (1 única chamada IPC)
+                estado = d.execute_script("""
+                    var tit = (document.title || "").toLowerCase();
+                    var id_upper = arguments[0].toLowerCase();
+                    
+                    if (tit) {
+                        if (tit.indexOf(id_upper) !== -1) return "carregado";
+                        if (tit.indexOf("não localizado") !== -1 || tit.indexOf("não localizada") !== -1 || tit.indexOf("não existe") !== -1) {
+                            return "nao_encontrado";
+                        }
+                    }
+                    
+                    // Checa se existe campo de login dentro do frame
+                    if (document.getElementsByName("USERNAME").length > 0) return "expirado";
+                    
+                    // Busca rápida de elementos de carregado
+                    if (document.querySelector("[pdmqa='status']") || document.getElementById("df_0_2_status")) {
+                        return "carregado";
+                    }
+                    
+                    // Checa texto de nao localizado no corpo de forma rápida
+                    var bodyText = (document.body ? document.body.innerText : "").toLowerCase();
+                    if (bodyText.indexOf("não localizado") !== -1 || bodyText.indexOf("não localizada") !== -1 || bodyText.indexOf("não existe") !== -1) {
+                        return "nao_encontrado";
+                    }
+                    
+                    return "carregando";
+                """, id_chamado)
 
-                # Limita a leitura pesada do DOM inteiro via page_source
-                iteracoes[0] += 1
-                if iteracoes[0] % 10 == 0:
-                    page = d.page_source.lower()
-                    if any(k in page for k in ("não localizado", "não localizada", "não existe")):
-                        return "nao_encontrado"
-
-                # Busca rápida de carregado usando seletores CSS ou ID
-                if d.find_elements(By.CSS_SELECTOR, "[pdmqa='status']") or d.find_elements(By.ID, "df_0_2_status"):
+                if estado == "expirado":
+                    raise WebDriverException("Sessao expirada (login detectado no popup).")
+                elif estado == "carregado":
                     return "carregado"
-
+                elif estado == "nao_encontrado":
+                    return "nao_encontrado"
+                
                 return False  # ainda carregando
             except UnexpectedAlertPresentException:
                 self.session.fechar_alertas("popup pronto check")
@@ -151,18 +162,34 @@ class CASDMScraper:
             'grupo_raw': None
         }
 
-        # -- Coluna D: Torre -----------
-        grupo_raw = ""
-        for seletor in [(By.CSS_SELECTOR, "[pdmqa='group']"), (By.ID, "df_5_2")]:
-            try:
-                el = driver.find_element(*seletor)
-                txt = el.text.strip()
-                if txt:
-                    grupo_raw = txt
-                    break
-            except Exception:
-                continue
+        # Executa extração em lote (Single-Roundtrip) via JS nativo dentro da engine do Chrome
+        try:
+            valores = driver.execute_script("""
+                return (function() {
+                    var getTxt = function(selectors) {
+                        for (var i = 0; i < selectors.length; i++) {
+                            var el = document.querySelector(selectors[i]);
+                            if (el && el.innerText) {
+                                var val = el.innerText.trim();
+                                if (val) return val;
+                            }
+                        }
+                        return "";
+                    };
+                    return {
+                        group: getTxt(["[pdmqa='group']", "#df_5_2"]),
+                        open_date: getTxt(["[pdmqa='open_date']", "#df_8_0"]),
+                        status: getTxt(["[pdmqa='status']", "#df_0_2_status"]),
+                        resolve_date: getTxt(["[pdmqa='resolve_date']", "#df_8_2", "[pdmqa='close_date']", "#df_8_3", "[pdmqa='last_mod_dt']"])
+                    };
+                })();
+            """)
+        except Exception as e_js:
+            self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [ERRO] Execucao JS para extracao: {str(e_js)[:120]}")
+            valores = {}
 
+        # -- Coluna D: Torre -----------
+        grupo_raw = valores.get('group', '').strip()
         if grupo_raw:
             valores_retornados['grupo_raw'] = grupo_raw
             codigo_torre = self.mapear_grupo_para_torre(grupo_raw)
@@ -174,17 +201,7 @@ class CASDMScraper:
 
         # -- Coluna E: Data Abertura -----------
         if not data_envio_atual:
-            campo_data_abertura = ""
-            for seletor in [(By.CSS_SELECTOR, "[pdmqa='open_date']"), (By.ID, "df_8_0")]:
-                try:
-                    el = driver.find_element(*seletor)
-                    txt = el.text.strip()
-                    if txt:
-                        campo_data_abertura = txt
-                        break
-                except Exception:
-                    continue
-
+            campo_data_abertura = valores.get('open_date', '').strip()
             if campo_data_abertura:
                 try:
                     data_pura = campo_data_abertura.split()[0]
@@ -194,36 +211,11 @@ class CASDMScraper:
                     self.log_callback(f"[Navegador {self.session.thread_id}] Linha {index}: [ERRO] Formatacao data abertura: {str(e)}")
 
         # -- Status Real -----------
-        status_real_ca = ""
-        for seletor in [(By.CSS_SELECTOR, "[pdmqa='status']"), (By.ID, "df_0_2_status")]:
-            try:
-                el = driver.find_element(*seletor)
-                txt = el.text.strip()
-                if txt:
-                    status_real_ca = txt
-                    break
-            except Exception:
-                continue
+        status_real_ca = valores.get('status', '').strip()
 
         # -- Coluna G: Data Resolucao -----------
         if status_real_ca.upper() in STATUS_RESOLVIDOS and not data_resolucao_atual:
-            campo_data_hora = ""
-            for seletor in [
-                (By.CSS_SELECTOR, "[pdmqa='resolve_date']"),
-                (By.ID,    "df_8_2"),
-                (By.CSS_SELECTOR, "[pdmqa='close_date']"),
-                (By.ID,    "df_8_3"),
-                (By.CSS_SELECTOR, "[pdmqa='last_mod_dt']"),
-            ]:
-                try:
-                    el = driver.find_element(*seletor)
-                    txt = el.text.strip()
-                    if txt:
-                        campo_data_hora = txt
-                        break
-                except Exception:
-                    continue
-
+            campo_data_hora = valores.get('resolve_date', '').strip()
             if campo_data_hora:
                 try:
                     data_pura = campo_data_hora.split()[0]
